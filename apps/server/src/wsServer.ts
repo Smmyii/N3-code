@@ -1102,6 +1102,7 @@ export const ServerLive = Layer.effect(
     const terminalManager = yield* TerminalManager;
     const keybindingsManager = yield* Keybindings;
     const providerHealth = yield* ProviderHealth;
+    const providerService = yield* ProviderService;
     const git = yield* GitCore;
     const orchestrationEngine = yield* OrchestrationEngineService;
     const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
@@ -1119,6 +1120,7 @@ export const ServerLive = Layer.effect(
         Effect.provideService(TerminalManager, terminalManager),
         Effect.provideService(Keybindings, keybindingsManager),
         Effect.provideService(ProviderHealth, providerHealth),
+        Effect.provideService(ProviderService, providerService),
         Effect.provideService(GitCore, git),
         Effect.provideService(OrchestrationEngineService, orchestrationEngine),
         Effect.provideService(ProjectionSnapshotQuery, projectionSnapshotQuery),
