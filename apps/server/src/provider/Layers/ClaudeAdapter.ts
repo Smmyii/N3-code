@@ -15,6 +15,7 @@ import {
   type PermissionUpdate,
   type SDKMessage,
   type SDKResultMessage,
+  type SettingSource,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import {
@@ -426,6 +427,11 @@ const SUPPORTED_CLAUDE_IMAGE_MIME_TYPES = new Set([
   "image/png",
   "image/webp",
 ]);
+const CLAUDE_SETTING_SOURCES = [
+  "user",
+  "project",
+  "local",
+] as const satisfies ReadonlyArray<SettingSource>;
 
 function buildPromptText(input: ProviderSendTurnInput): string {
   const requestedEffort = resolveReasoningEffortForProvider(
@@ -474,7 +480,7 @@ function buildUserMessageEffect(
   input: ProviderSendTurnInput,
   dependencies: {
     readonly fileSystem: FileSystem.FileSystem;
-    readonly stateDir: string;
+    readonly attachmentsDir: string;
   },
 ): Effect.Effect<SDKUserMessage, ProviderAdapterRequestError> {
   return Effect.gen(function* () {
@@ -499,7 +505,7 @@ function buildUserMessageEffect(
       }
 
       const attachmentPath = resolveAttachmentPath({
-        stateDir: dependencies.stateDir,
+        attachmentsDir: dependencies.attachmentsDir,
         attachment,
       });
       if (!attachmentPath) {
@@ -2562,6 +2568,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
           ...(input.cwd ? { cwd: input.cwd } : {}),
           ...(input.model ? { model: input.model } : {}),
           pathToClaudeCodeExecutable: providerOptions?.binaryPath ?? "claude",
+          settingSources: [...CLAUDE_SETTING_SOURCES],
           ...(effectiveEffort ? { effort: effectiveEffort } : {}),
           ...(permissionMode ? { permissionMode } : {}),
           ...(permissionMode === "bypassPermissions"
@@ -2765,7 +2772,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
 
         const message = yield* buildUserMessageEffect(input, {
           fileSystem,
-          stateDir: serverConfig.stateDir,
+          attachmentsDir: serverConfig.attachmentsDir,
         });
 
         yield* Queue.offer(context.promptQueue, {

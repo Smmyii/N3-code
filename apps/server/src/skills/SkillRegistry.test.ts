@@ -15,6 +15,10 @@ async function makeTempDir(prefix: string): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), prefix));
 }
 
+function appStateDir(baseDir: string): string {
+  return path.join(baseDir, "userdata");
+}
+
 describe("SkillRegistry", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -66,7 +70,7 @@ describe("SkillRegistry", () => {
         ].join("\n"),
         "utf8",
       );
-      await fs.mkdir(path.join(stateDir, "skills"), { recursive: true });
+      await fs.mkdir(path.join(appStateDir(stateDir), "skills"), { recursive: true });
 
       const runtimeLayer = SkillRegistryLive.pipe(
         Layer.provideMerge(
@@ -318,9 +322,9 @@ describe("SkillRegistry", () => {
         "# Copywriter\n\nWrites sharp product copy.\n",
         "utf8",
       );
-      await fs.mkdir(path.join(stateDir, "skills"), { recursive: true });
+      await fs.mkdir(path.join(appStateDir(stateDir), "skills"), { recursive: true });
       await fs.writeFile(
-        path.join(stateDir, "skills", provenanceFileName(skillDir)),
+        path.join(appStateDir(stateDir), "skills", provenanceFileName(skillDir)),
         JSON.stringify({
           installPath: skillDir,
           sourceUrl: "https://skills.sh/openai/codex/copywriter",
