@@ -200,26 +200,28 @@ export function installDirectoryFor(params: {
   workspaceRoot?: string;
   codexHomePath?: string;
 }): string {
+  const scopeRoot =
+    params.scope === "project"
+      ? (() => {
+          if (!params.workspaceRoot) {
+            throw new Error("Project-scoped installs require a workspace root.");
+          }
+          return params.workspaceRoot;
+        })()
+      : os.homedir();
+
   if (params.provider === "codex") {
     if (params.scope === "project") {
-      return path.join(params.workspaceRoot ?? "", ".codex", "skills");
+      return path.join(scopeRoot, ".codex", "skills");
     }
     return path.join(params.codexHomePath ?? path.join(os.homedir(), ".codex"), "skills");
   }
 
   if (params.kind === "subagent") {
-    return path.join(
-      params.scope === "project" ? (params.workspaceRoot ?? "") : os.homedir(),
-      ".claude",
-      "agents",
-    );
+    return path.join(scopeRoot, ".claude", "agents");
   }
 
-  return path.join(
-    params.scope === "project" ? (params.workspaceRoot ?? "") : os.homedir(),
-    ".claude",
-    "skills",
-  );
+  return path.join(scopeRoot, ".claude", "skills");
 }
 
 export function compatibleProvidersFor(params: {

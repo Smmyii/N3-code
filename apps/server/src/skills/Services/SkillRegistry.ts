@@ -775,7 +775,7 @@ export const SkillRegistryLive = Layer.effect(
       };
     };
 
-    const adoptImpl = async (input: SkillsAdoptInput): Promise<SkillsInventory> => {
+    const adoptImpl = async (input: SkillsAdoptInput): Promise<SkillsAdoptResult> => {
       assertSkillsEnabled("adopt");
       const preview = await previewAdoptImpl(input);
       if (!preview.canAdopt) {

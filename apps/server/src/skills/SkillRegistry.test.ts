@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ServerConfig } from "../config";
 import { SkillRegistry, SkillRegistryLive } from "./Services/SkillRegistry";
 import { AnalyticsService } from "../telemetry/Services/AnalyticsService";
-import { provenanceFileName } from "./shared";
+import { installDirectoryFor, provenanceFileName } from "./shared";
 
 async function makeTempDir(prefix: string): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), prefix));
@@ -50,6 +50,16 @@ async function createSkillArchive(params: {
 describe("SkillRegistry", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it("rejects project-scoped install roots without a workspace root", () => {
+    expect(() =>
+      installDirectoryFor({
+        provider: "codex",
+        kind: "skill",
+        scope: "project",
+      }),
+    ).toThrow("Project-scoped installs require a workspace root.");
   });
 
   it("lists installed skills and subagents with metadata and provenance", async () => {
