@@ -862,6 +862,16 @@ export const SkillRegistryLive = Layer.effect(
       }
 
       const owner = ownerTarget(record);
+      const enablingLinkedTargets = record.targets.some((candidate) => {
+        const shouldApply =
+          input.scope === "all-providers"
+            ? candidate.role === "linked"
+            : candidate.installPath === target.installPath;
+        return shouldApply && candidate.role === "linked" && input.enabled;
+      });
+      if (enablingLinkedTargets && !(await installExists(owner.installPath))) {
+        throw new Error("The managed owner install is missing and cannot enable linked targets.");
+      }
       const nextTargets = await Promise.all(
         record.targets.map(async (candidate) => {
           const shouldApply =
@@ -1180,9 +1190,9 @@ export const SkillRegistryLive = Layer.effect(
             throw new Error("Refusing to remove a path outside managed skill directories.");
           }
           const isDirectoryInstall = await fileExists(path.join(normalizedInstallPath, SKILL_MD));
-          const isFileInstall =
+          const isMarkdownInstall =
             normalizedInstallPath.endsWith(".md") && (await fileExists(normalizedInstallPath));
-          if (!isDirectoryInstall && !isFileInstall) {
+          if (!isDirectoryInstall && !isMarkdownInstall) {
             throw new Error(
               "Refusing to remove a path that is not a managed skill or subagent install.",
             );

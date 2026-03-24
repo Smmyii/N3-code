@@ -749,6 +749,72 @@ describe("SkillRegistry", () => {
     }
   });
 
+  it("rejects re-enabling a linked target when the owner install is missing", async () => {
+    const workspaceRoot = await makeTempDir("t3-skill-workspace-");
+    const stateDir = await makeTempDir("t3-skill-state-");
+    const codexHome = await makeTempDir("t3-skill-codex-home-");
+    const originalHome = process.env.HOME;
+    const fakeHome = await makeTempDir("t3-skill-home-");
+    process.env.HOME = fakeHome;
+
+    try {
+      const skillDir = path.join(codexHome, "skills", "copywriter");
+      const claudeLinkedPath = path.join(fakeHome, ".claude", "skills", "copywriter");
+      await fs.mkdir(skillDir, { recursive: true });
+      await fs.writeFile(
+        path.join(skillDir, "SKILL.md"),
+        "# Copywriter\n\nWrites sharp product copy.\n",
+        "utf8",
+      );
+
+      const runtimeLayer = SkillRegistryLive.pipe(
+        Layer.provideMerge(
+          ServerConfig.layerTest(workspaceRoot, stateDir).pipe(
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ),
+        Layer.provideMerge(AnalyticsService.layerTest),
+      );
+
+      await expect(
+        Effect.runPromise(
+          Effect.gen(function* () {
+            const registry = yield* SkillRegistry;
+            yield* registry.adopt({
+              installPath: skillDir,
+              workspaceRoot,
+              codexHomePath: codexHome,
+              targetProviders: ["claudeAgent"],
+            });
+            yield* registry.setEnabled({
+              installPath: claudeLinkedPath,
+              enabled: false,
+              scope: "current-provider",
+              workspaceRoot,
+              codexHomePath: codexHome,
+            });
+            yield* Effect.promise(() => fs.rm(skillDir, { recursive: true, force: true }));
+            return yield* registry.setEnabled({
+              installPath: claudeLinkedPath,
+              enabled: true,
+              scope: "current-provider",
+              workspaceRoot,
+              codexHomePath: codexHome,
+            });
+          }).pipe(Effect.provide(runtimeLayer)),
+        ),
+      ).rejects.toThrow("The managed owner install is missing and cannot enable linked targets.");
+
+      await expect(fs.lstat(claudeLinkedPath)).rejects.toThrow();
+    } finally {
+      process.env.HOME = originalHome;
+      await fs.rm(workspaceRoot, { recursive: true, force: true });
+      await fs.rm(stateDir, { recursive: true, force: true });
+      await fs.rm(codexHome, { recursive: true, force: true });
+      await fs.rm(fakeHome, { recursive: true, force: true });
+    }
+  });
+
   it("stops managing by removing linked installs and leaving the owner untouched", async () => {
     const workspaceRoot = await makeTempDir("t3-skill-workspace-");
     const stateDir = await makeTempDir("t3-skill-state-");
