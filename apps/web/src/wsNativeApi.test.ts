@@ -281,6 +281,129 @@ describe("wsNativeApi", () => {
     expect(onDomainEvent).toHaveBeenCalledWith(orchestrationEvent);
   });
 
+  it("routes skills API calls to the expected websocket methods", async () => {
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+    requestMock.mockResolvedValueOnce({ items: [], warnings: [] });
+    requestMock.mockResolvedValueOnce({
+      provider: "codex",
+      kind: "skill",
+      scope: "global",
+      slug: "copywriter",
+      displayName: "Copywriter",
+      sourceUrl: "https://skills.sh/example/copywriter",
+      repoUrl: "https://github.com/example/skills",
+      installPath: "/tmp/.codex/skills/copywriter",
+      exists: false,
+      warnings: [],
+    });
+    requestMock.mockResolvedValueOnce({
+      item: {
+        provider: "codex",
+        kind: "skill",
+        scope: "global",
+        slug: "copywriter",
+        displayName: "Copywriter",
+        installPath: "/tmp/.codex/skills/copywriter",
+      },
+      warnings: [],
+    });
+    requestMock.mockResolvedValueOnce({ removed: true });
+    requestMock.mockResolvedValueOnce({ items: [], warnings: [] });
+    requestMock.mockResolvedValueOnce({
+      installPath: "/tmp/.codex/skills/copywriter",
+      provider: "codex",
+      kind: "skill",
+      scope: "global",
+      slug: "copywriter",
+      displayName: "Copywriter",
+      canAdopt: true,
+      compatibleTargets: [
+        {
+          provider: "claudeAgent",
+          installPath: "/tmp/.claude/skills/copywriter",
+          state: "missing",
+        },
+      ],
+      defaultTargetProviders: ["claudeAgent"],
+      warnings: [],
+    });
+    requestMock.mockResolvedValueOnce({ items: [], warnings: [] });
+    requestMock.mockResolvedValueOnce({ items: [], warnings: [] });
+    requestMock.mockResolvedValueOnce({ items: [], warnings: [] });
+    requestMock.mockResolvedValueOnce({ items: [], warnings: [] });
+    requestMock.mockResolvedValueOnce({ items: [], warnings: [] });
+
+    await api.skills.list({ workspaceRoot: "/tmp/workspace" });
+    await api.skills.previewInstall({
+      url: "https://skills.sh/example/copywriter",
+      provider: "codex",
+      kind: "skill",
+      scope: "global",
+    });
+    await api.skills.install({
+      url: "https://skills.sh/example/copywriter",
+      provider: "codex",
+      kind: "skill",
+      scope: "global",
+    });
+    await api.skills.remove({ installPath: "/tmp/.codex/skills/copywriter" });
+    await api.skills.refresh({ workspaceRoot: "/tmp/workspace" });
+    await api.skills.previewAdopt({ installPath: "/tmp/.codex/skills/copywriter" });
+    await api.skills.adopt({
+      installPath: "/tmp/.codex/skills/copywriter",
+      targetProviders: ["claudeAgent"],
+    });
+    await api.skills.setEnabled({
+      installPath: "/tmp/.claude/skills/copywriter",
+      enabled: false,
+      scope: "current-provider",
+    });
+    await api.skills.repairManagedLinks({ installPath: "/tmp/.claude/skills/copywriter" });
+    await api.skills.stopManaging({ installPath: "/tmp/.codex/skills/copywriter" });
+
+    expect(requestMock).toHaveBeenNthCalledWith(1, WS_METHODS.skillsList, {
+      workspaceRoot: "/tmp/workspace",
+    });
+    expect(requestMock).toHaveBeenNthCalledWith(2, WS_METHODS.skillsPreviewInstall, {
+      url: "https://skills.sh/example/copywriter",
+      provider: "codex",
+      kind: "skill",
+      scope: "global",
+    });
+    expect(requestMock).toHaveBeenNthCalledWith(3, WS_METHODS.skillsInstall, {
+      url: "https://skills.sh/example/copywriter",
+      provider: "codex",
+      kind: "skill",
+      scope: "global",
+    });
+    expect(requestMock).toHaveBeenNthCalledWith(4, WS_METHODS.skillsRemove, {
+      installPath: "/tmp/.codex/skills/copywriter",
+    });
+    expect(requestMock).toHaveBeenNthCalledWith(5, WS_METHODS.skillsRefresh, {
+      workspaceRoot: "/tmp/workspace",
+    });
+    expect(requestMock).toHaveBeenNthCalledWith(6, WS_METHODS.skillsPreviewAdopt, {
+      installPath: "/tmp/.codex/skills/copywriter",
+    });
+    expect(requestMock).toHaveBeenNthCalledWith(7, WS_METHODS.skillsAdopt, {
+      installPath: "/tmp/.codex/skills/copywriter",
+      targetProviders: ["claudeAgent"],
+    });
+    expect(requestMock).toHaveBeenNthCalledWith(8, WS_METHODS.skillsSetEnabled, {
+      installPath: "/tmp/.claude/skills/copywriter",
+      enabled: false,
+      scope: "current-provider",
+    });
+    expect(requestMock).toHaveBeenNthCalledWith(9, WS_METHODS.skillsRepairManagedLinks, {
+      installPath: "/tmp/.claude/skills/copywriter",
+    });
+    expect(requestMock).toHaveBeenNthCalledWith(10, WS_METHODS.skillsStopManaging, {
+      installPath: "/tmp/.codex/skills/copywriter",
+    });
+  });
+
   it("wraps orchestration dispatch commands in the command envelope", async () => {
     requestMock.mockResolvedValue(undefined);
     const { createWsNativeApi } = await import("./wsNativeApi");

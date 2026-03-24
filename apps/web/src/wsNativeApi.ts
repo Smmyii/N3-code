@@ -161,6 +161,21 @@ export function createWsNativeApi(): NativeApi {
       getConfig: () => transport.request(WS_METHODS.serverGetConfig),
       upsertKeybinding: (input) => transport.request(WS_METHODS.serverUpsertKeybinding, input),
     },
+    skills: {
+      list: (input) => transport.request(WS_METHODS.skillsList, input),
+      previewInstall: (input) => transport.request(WS_METHODS.skillsPreviewInstall, input),
+      install: (input) => transport.request(WS_METHODS.skillsInstall, input),
+      remove: (input) => transport.request(WS_METHODS.skillsRemove, input),
+      refresh: (input) => transport.request(WS_METHODS.skillsRefresh, input),
+      checkUpdates: (input) => transport.request(WS_METHODS.skillsCheckUpdates, input),
+      upgrade: (input) => transport.request(WS_METHODS.skillsUpgrade, input),
+      reinstall: (input) => transport.request(WS_METHODS.skillsReinstall, input),
+      previewAdopt: (input) => transport.request(WS_METHODS.skillsPreviewAdopt, input),
+      adopt: (input) => transport.request(WS_METHODS.skillsAdopt, input),
+      setEnabled: (input) => transport.request(WS_METHODS.skillsSetEnabled, input),
+      repairManagedLinks: (input) => transport.request(WS_METHODS.skillsRepairManagedLinks, input),
+      stopManaging: (input) => transport.request(WS_METHODS.skillsStopManaging, input),
+    },
     orchestration: {
       getSnapshot: () => transport.request(ORCHESTRATION_WS_METHODS.getSnapshot),
       dispatchCommand: (command) =>

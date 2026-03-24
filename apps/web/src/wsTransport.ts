@@ -13,7 +13,7 @@ type PushListener<C extends WsPushChannel> = (message: WsPushMessage<C>) => void
 
 interface PendingRequest {
   resolve: (result: unknown) => void;
-  reject: (error: Error) => void;
+  reject: (error: WsRequestError) => void;
   timeout: ReturnType<typeof setTimeout>;
 }
 
@@ -44,6 +44,22 @@ function asError(value: unknown, fallback: string): Error {
     return value;
   }
   return new Error(fallback);
+}
+
+export class WsRequestError extends Error {
+  code?: string;
+  details?: unknown;
+
+  constructor(message: string, options?: { code?: string; details?: unknown }) {
+    super(message);
+    this.name = "WsRequestError";
+    if (options?.code !== undefined) {
+      this.code = options.code;
+    }
+    if (options?.details !== undefined) {
+      this.details = options.details;
+    }
+  }
 }
 
 export class WsTransport {
@@ -90,7 +106,7 @@ export class WsTransport {
 
       this.pending.set(id, {
         resolve: resolve as (result: unknown) => void,
-        reject,
+        reject: reject as (error: WsRequestError) => void,
         timeout,
       });
 
@@ -228,7 +244,12 @@ export class WsTransport {
     this.pending.delete(message.id);
 
     if (message.error) {
-      pending.reject(new Error(message.error.message));
+      pending.reject(
+        new WsRequestError(message.error.message, {
+          ...(message.error.code ? { code: message.error.code } : {}),
+          ...(message.error.details !== undefined ? { details: message.error.details } : {}),
+        }),
+      );
       return;
     }
 

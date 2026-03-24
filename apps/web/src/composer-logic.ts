@@ -1,7 +1,14 @@
+import type { ProviderKind } from "@t3tools/contracts";
 import { splitPromptIntoComposerSegments } from "./composer-editor-mentions";
 import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
 
-export type ComposerTriggerKind = "path" | "slash-command" | "slash-model";
+export type ComposerTriggerKind =
+  | "path"
+  | "skill"
+  | "subagent"
+  | "slash-command"
+  | "slash-model"
+  | "unified-at";
 export type ComposerSlashCommand = "model" | "plan" | "default";
 
 export interface ComposerTrigger {
@@ -12,9 +19,12 @@ export interface ComposerTrigger {
 }
 
 const SLASH_COMMANDS: readonly ComposerSlashCommand[] = ["model", "plan", "default"];
-const isInlineTokenSegment = (
-  segment: { type: "text"; text: string } | { type: "mention" } | { type: "terminal-context" },
-): boolean => segment.type !== "text";
+type ComposerInlineSegment =
+  | { type: "text"; text: string }
+  | { type: "token"; prefix: "@" | "$"; value: string }
+  | { type: "terminal-context" };
+
+const isInlineTokenSegment = (segment: ComposerInlineSegment): boolean => segment.type !== "text";
 
 function clampCursor(text: string, cursor: number): number {
   if (!Number.isFinite(cursor)) return text.length;
@@ -50,8 +60,8 @@ export function expandCollapsedComposerCursor(text: string, cursorInput: number)
   let expandedCursor = 0;
 
   for (const segment of segments) {
-    if (segment.type === "mention") {
-      const expandedLength = segment.path.length + 1;
+    if (segment.type === "token") {
+      const expandedLength = segment.value.length + 1;
       if (remaining <= 1) {
         return expandedCursor + (remaining === 0 ? 0 : expandedLength);
       }
@@ -79,9 +89,7 @@ export function expandCollapsedComposerCursor(text: string, cursorInput: number)
   return expandedCursor;
 }
 
-function collapsedSegmentLength(
-  segment: { type: "text"; text: string } | { type: "mention" } | { type: "terminal-context" },
-): number {
+function collapsedSegmentLength(segment: ComposerInlineSegment): number {
   if (segment.type === "text") {
     return segment.text.length;
   }
@@ -89,9 +97,7 @@ function collapsedSegmentLength(
 }
 
 function clampCollapsedComposerCursorForSegments(
-  segments: ReadonlyArray<
-    { type: "text"; text: string } | { type: "mention" } | { type: "terminal-context" }
-  >,
+  segments: ReadonlyArray<ComposerInlineSegment>,
   cursorInput: number,
 ): number {
   const collapsedLength = segments.reduce(
@@ -122,8 +128,8 @@ export function collapseExpandedComposerCursor(text: string, cursorInput: number
   let collapsedCursor = 0;
 
   for (const segment of segments) {
-    if (segment.type === "mention") {
-      const expandedLength = segment.path.length + 1;
+    if (segment.type === "token") {
+      const expandedLength = segment.value.length + 1;
       if (remaining === 0) {
         return collapsedCursor;
       }
@@ -184,7 +190,11 @@ export function isCollapsedCursorAdjacentToInlineToken(
 
 export const isCollapsedCursorAdjacentToMention = isCollapsedCursorAdjacentToInlineToken;
 
-export function detectComposerTrigger(text: string, cursorInput: number): ComposerTrigger | null {
+export function detectComposerTrigger(
+  text: string,
+  cursorInput: number,
+  _provider?: ProviderKind,
+): ComposerTrigger | null {
   const cursor = clampCursor(text, cursorInput);
   const lineStart = text.lastIndexOf("\n", Math.max(0, cursor - 1)) + 1;
   const linePrefix = text.slice(lineStart, cursor);
@@ -225,8 +235,17 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
 
   const tokenStart = tokenStartForCursor(text, cursor);
   const token = text.slice(tokenStart, cursor);
-  if (!token.startsWith("@")) {
+  if (!token.startsWith("@") && !token.startsWith("$")) {
     return null;
+  }
+
+  if (token.startsWith("$")) {
+    return {
+      kind: "skill",
+      query: token.slice(1),
+      rangeStart: tokenStart,
+      rangeEnd: cursor,
+    };
   }
 
   return {

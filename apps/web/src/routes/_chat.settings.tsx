@@ -29,6 +29,7 @@ import {
 import { Switch } from "../components/ui/switch";
 import { APP_VERSION } from "../branding";
 import { SidebarInset } from "~/components/ui/sidebar";
+import { SettingsSkillsSection } from "~/components/SettingsSkillsSection";
 
 const THEME_OPTIONS = [
   {
@@ -69,11 +70,12 @@ function SettingsRouteView() {
   const [customModelErrorByProvider, setCustomModelErrorByProvider] = useState<
     Partial<Record<ProviderKind, string | null>>
   >({});
-
   const codexBinaryPath = settings.codexBinaryPath;
   const codexHomePath = settings.codexHomePath;
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
   const availableEditors = serverConfigQuery.data?.availableEditors;
+  const workspaceRoot = serverConfigQuery.data?.cwd ?? null;
+  const skillsEnabled = serverConfigQuery.data?.skillsEnabled ?? true;
 
   const gitTextGenerationModelOptions = getAppModelOptions(
     "codex",
@@ -281,6 +283,13 @@ function SettingsRouteView() {
                 ) : null}
               </div>
             </section>
+
+            <SettingsSkillsSection
+              skillsEnabled={skillsEnabled}
+              workspaceRoot={workspaceRoot}
+              codexHomePath={codexHomePath}
+              availableEditors={availableEditors}
+            />
 
             <section className="rounded-2xl border border-border bg-card p-5">
               <div className="mb-4">
@@ -612,6 +621,40 @@ function SettingsRouteView() {
                     onClick={() =>
                       updateSettings({
                         enableAssistantStreaming: defaults.enableAssistantStreaming,
+                      })
+                    }
+                  >
+                    Restore default
+                  </Button>
+                </div>
+              ) : null}
+
+              <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                <div>
+                  <p className="text-sm font-medium text-foreground">Grouped command menu</p>
+                  <p className="text-xs text-muted-foreground">
+                    Show skills, subagents, and files in labeled sections when using the @ menu.
+                  </p>
+                </div>
+                <Switch
+                  checked={settings.composerMenuLayout === "separated"}
+                  onCheckedChange={(checked) =>
+                    updateSettings({
+                      composerMenuLayout: checked ? "separated" : "unified",
+                    })
+                  }
+                  aria-label="Grouped command menu"
+                />
+              </div>
+
+              {settings.composerMenuLayout !== defaults.composerMenuLayout ? (
+                <div className="mt-3 flex justify-end">
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    onClick={() =>
+                      updateSettings({
+                        composerMenuLayout: defaults.composerMenuLayout,
                       })
                     }
                   >
