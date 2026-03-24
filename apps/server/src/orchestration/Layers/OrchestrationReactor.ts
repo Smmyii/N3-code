@@ -20,7 +20,11 @@ export const makeOrchestrationReactor = Effect.gen(function* () {
   });
 
   return {
-    start,
+    start: start.pipe(
+      Effect.provideService(ProviderRuntimeIngestionService, providerRuntimeIngestion),
+      Effect.provideService(ProviderCommandReactor, providerCommandReactor),
+      Effect.provideService(CheckpointReactor, checkpointReactor),
+    ),
   } satisfies OrchestrationReactorShape;
 });
 

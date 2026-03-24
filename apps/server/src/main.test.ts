@@ -5,17 +5,29 @@ import type { OrchestrationReadModel } from "@t3tools/contracts";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Command from "effect/unstable/cli/Command";
 import { FetchHttpClient } from "effect/unstable/http";
+import * as os from "node:os";
+import * as path from "node:path";
+import { mkdtemp } from "node:fs/promises";
 import { beforeEach } from "vitest";
 import { NetService } from "@t3tools/shared/Net";
 
-import { CliConfig, recordStartupHeartbeat, t3Cli, type CliConfigShape } from "./main";
+import {
+  CliConfig,
+  makeServerConfigLayer,
+  makeServerLayer,
+  makeT3Cli,
+  recordStartupHeartbeat,
+  type CliConfigShape,
+} from "./main";
 import { ServerConfig, type ServerConfigShape } from "./config";
 import { Open, type OpenShape } from "./open";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
 import { Server, type ServerShape } from "./wsServer";
+import { SkillRegistry } from "./skills/Services/SkillRegistry";
 
 const start = vi.fn(() => undefined);
 const stop = vi.fn(() => undefined);
@@ -61,7 +73,23 @@ const runCli = (
   env: Record<string, string> = { T3CODE_NO_BROWSER: "true" },
 ) => {
   const uniqueStateDir = `/tmp/t3-cli-state-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-  return Command.runWith(t3Cli, { version: "0.0.0-test" })(args).pipe(
+  const cli = makeT3Cli((input) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cliConfig = yield* CliConfig;
+        const server = (yield* Server) as {
+          start: Effect.Effect<Http.Server, never, never>;
+          stopSignal: Effect.Effect<void, never, never>;
+        };
+
+        yield* cliConfig.fixPath;
+        yield* ServerConfig;
+        yield* server.start;
+        return yield* server.stopSignal;
+      }).pipe(Effect.provide(makeServerConfigLayer(input).pipe(Layer.provideMerge(testLayer)))),
+    ),
+  );
+  return Command.runWith(cli, { version: "0.0.0-test" })(args).pipe(
     Effect.provide(
       ConfigProvider.layer(
         ConfigProvider.fromEnv({
@@ -270,6 +298,39 @@ it.layer(testLayer)("server CLI command", (it) => {
     }),
   );
 
+  it.effect("builds the real startup layer with skills enabled", () =>
+    Effect.gen(function* () {
+      const stateDir = yield* Effect.promise(() =>
+        mkdtemp(path.join(os.tmpdir(), "t3-main-test-state-")),
+      );
+
+      const layer = makeServerLayer({
+        mode: Option.some("web"),
+        port: Option.some(0),
+        host: Option.none(),
+        stateDir: Option.some(stateDir),
+        devUrl: Option.none(),
+        noBrowser: Option.some(true),
+        authToken: Option.none(),
+        autoBootstrapProjectFromCwd: Option.some(false),
+        logWebSocketEvents: Option.some(false),
+        skillsEnabled: Option.some(true),
+      }).pipe(
+        Layer.provideMerge(CliConfig.layer),
+        Layer.provideMerge(OpenLiveTest),
+        Layer.provideMerge(NetService.layer),
+        Layer.provideMerge(NodeServices.layer),
+        Layer.provideMerge(FetchHttpClient.layer),
+      );
+
+      const server = yield* Effect.service(Server).pipe(Effect.provide(layer));
+      const skillRegistry = yield* Effect.service(SkillRegistry).pipe(Effect.provide(layer));
+
+      assert.ok(server);
+      assert.ok(skillRegistry);
+    }),
+  );
+
   it.effect("does not start server for invalid --mode values", () =>
     Effect.gen(function* () {
       yield* runCli(["--mode", "invalid"]);
@@ -298,3 +359,8 @@ it.layer(testLayer)("server CLI command", (it) => {
     }),
   );
 });
+
+const OpenLiveTest = Layer.succeed(Open, {
+  openBrowser: (_target: string) => Effect.void,
+  openInEditor: () => Effect.void,
+} satisfies OpenShape);

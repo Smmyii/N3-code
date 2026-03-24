@@ -52,6 +52,7 @@ export const ServerConfig = Schema.Struct({
   issues: ServerConfigIssues,
   providers: ServerProviderStatuses,
   availableEditors: Schema.Array(EditorId),
+  skillsEnabled: Schema.Boolean,
 });
 export type ServerConfig = typeof ServerConfig.Type;
 

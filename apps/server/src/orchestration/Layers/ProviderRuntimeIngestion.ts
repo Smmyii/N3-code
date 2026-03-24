@@ -1247,8 +1247,16 @@ const make = Effect.gen(function* () {
   });
 
   return {
-    start,
-    drain: worker.drain,
+    start: start.pipe(
+      Effect.provideService(OrchestrationEngineService, orchestrationEngine),
+      Effect.provideService(ProviderService, providerService),
+      Effect.provideService(ProjectionTurnRepository, projectionTurnRepository),
+    ),
+    drain: worker.drain.pipe(
+      Effect.provideService(OrchestrationEngineService, orchestrationEngine),
+      Effect.provideService(ProviderService, providerService),
+      Effect.provideService(ProjectionTurnRepository, projectionTurnRepository),
+    ),
   } satisfies ProviderRuntimeIngestionShape;
 });
 

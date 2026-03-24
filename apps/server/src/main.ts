@@ -8,6 +8,7 @@
  */
 import { Config, Data, Effect, FileSystem, Layer, Option, Path, Schema, ServiceMap } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { NetService } from "@t3tools/shared/Net";
 import {
   DEFAULT_PORT,
@@ -22,10 +23,11 @@ import * as SqlitePersistence from "./persistence/Layers/Sqlite";
 import { makeServerProviderLayer, makeServerRuntimeServicesLayer } from "./serverLayers";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
 import { ProviderHealthLive } from "./provider/Layers/ProviderHealth";
-import { Server } from "./wsServer";
+import { Server, ServerLive } from "./wsServer";
 import { ServerLoggerLive } from "./serverLogger";
 import { AnalyticsServiceLayerLive } from "./telemetry/Layers/AnalyticsService";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
+import { SkillRegistryLive } from "./skills/Services/SkillRegistry";
 
 export class StartupError extends Data.TaggedError("StartupError")<{
   readonly message: string;
@@ -42,6 +44,7 @@ interface CliInput {
   readonly authToken: Option.Option<string>;
   readonly autoBootstrapProjectFromCwd: Option.Option<boolean>;
   readonly logWebSocketEvents: Option.Option<boolean>;
+  readonly skillsEnabled: Option.Option<boolean>;
 }
 
 /**
@@ -120,12 +123,16 @@ const CliEnvConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
+  skillsEnabled: Config.boolean("T3CODE_ENABLE_SKILLS").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
 });
 
 const resolveBooleanFlag = (flag: Option.Option<boolean>, envValue: boolean) =>
   Option.getOrElse(Option.filter(flag, Boolean), () => envValue);
 
-const ServerConfigLive = (input: CliInput) =>
+export const makeServerConfigLayer = (input: CliInput) =>
   Layer.effect(
     ServerConfig,
     Effect.gen(function* () {
@@ -166,6 +173,7 @@ const ServerConfigLive = (input: CliInput) =>
         input.logWebSocketEvents,
         env.logWebSocketEvents ?? Boolean(devUrl),
       );
+      const skillsEnabled = resolveBooleanFlag(input.skillsEnabled, env.skillsEnabled ?? true);
       const staticDir = devUrl ? undefined : yield* cliConfig.resolveStaticDir;
       const { join } = yield* Path.Path;
       const keybindingsConfigPath = join(stateDir, "keybindings.json");
@@ -187,22 +195,52 @@ const ServerConfigLive = (input: CliInput) =>
         authToken,
         autoBootstrapProjectFromCwd,
         logWebSocketEvents,
+        skillsEnabled,
       } satisfies ServerConfigShape;
 
       return config;
     }),
   );
 
-const LayerLive = (input: CliInput) =>
-  Layer.empty.pipe(
-    Layer.provideMerge(makeServerRuntimeServicesLayer()),
-    Layer.provideMerge(makeServerProviderLayer()),
-    Layer.provideMerge(ProviderHealthLive),
-    Layer.provideMerge(SqlitePersistence.layerConfig),
-    Layer.provideMerge(ServerLoggerLive),
-    Layer.provideMerge(AnalyticsServiceLayerLive),
-    Layer.provideMerge(ServerConfigLive(input)),
+export const makeServerLayer = (input: CliInput) => {
+  const configLayer = makeServerConfigLayer(input);
+  const nodeServicesLayer = NodeServices.layer;
+  const loggerLayer = ServerLoggerLive.pipe(Layer.provideMerge(configLayer));
+  const configAndLoggerLayer = Layer.mergeAll(configLayer, loggerLayer);
+  const foundationLayer = nodeServicesLayer.pipe(Layer.provideMerge(configAndLoggerLayer));
+  const sqliteRuntimeLayer = SqlitePersistence.layerConfig.pipe(
+    Layer.provideMerge(foundationLayer),
   );
+  const baseLayer = Layer.mergeAll(configAndLoggerLayer, sqliteRuntimeLayer);
+  const telemetryLayer = AnalyticsServiceLayerLive.pipe(Layer.provide(baseLayer));
+  const providerLayer = makeServerProviderLayer().pipe(
+    Layer.provideMerge(nodeServicesLayer),
+    Layer.provideMerge(telemetryLayer),
+    Layer.provideMerge(baseLayer),
+  );
+  const runtimeServicesLayer = makeServerRuntimeServicesLayer().pipe(
+    Layer.provideMerge(nodeServicesLayer),
+    Layer.provideMerge(providerLayer),
+    Layer.provideMerge(baseLayer),
+  );
+  const healthLayer = ProviderHealthLive.pipe(
+    Layer.provideMerge(nodeServicesLayer),
+    Layer.provideMerge(baseLayer),
+  );
+  const skillsLayer = SkillRegistryLive.pipe(
+    Layer.provideMerge(telemetryLayer),
+    Layer.provideMerge(baseLayer),
+  );
+  const baseRuntimeLayer = telemetryLayer.pipe(Layer.provideMerge(baseLayer));
+  const foundationalRuntimeLayer = nodeServicesLayer.pipe(Layer.provideMerge(baseRuntimeLayer));
+  const sharedLayer = providerLayer.pipe(Layer.provideMerge(foundationalRuntimeLayer));
+  const sharedLayerWithHealth = healthLayer.pipe(Layer.provideMerge(sharedLayer));
+  const sharedLayerWithSkills = skillsLayer.pipe(Layer.provideMerge(sharedLayerWithHealth));
+  const appLayer = runtimeServicesLayer.pipe(Layer.provideMerge(sharedLayerWithSkills));
+  const serverLayer = ServerLive.pipe(Layer.provideMerge(appLayer));
+
+  return Layer.mergeAll(appLayer, serverLayer);
+};
 
 const isWildcardHost = (host: string | undefined): boolean =>
   host === "0.0.0.0" || host === "::" || host === "[::]";
@@ -235,7 +273,7 @@ export const recordStartupHeartbeat = Effect.gen(function* () {
   });
 });
 
-const makeServerProgram = (input: CliInput) =>
+export const makeServerProgram = (input: CliInput) =>
   Effect.gen(function* () {
     const cliConfig = yield* CliConfig;
     const { start, stopSignal } = yield* Server;
@@ -280,7 +318,7 @@ const makeServerProgram = (input: CliInput) =>
     }
 
     return yield* stopSignal;
-  }).pipe(Effect.provide(LayerLive(input)));
+  }).pipe(Effect.provide(makeServerLayer(input)));
 
 /**
  * These flags mirrors the environment variables and the config shape.
@@ -330,18 +368,32 @@ const logWebSocketEventsFlag = Flag.boolean("log-websocket-events").pipe(
   Flag.withAlias("log-ws-events"),
   Flag.optional,
 );
-
-export const t3Cli = Command.make("t3", {
-  mode: modeFlag,
-  port: portFlag,
-  host: hostFlag,
-  stateDir: stateDirFlag,
-  devUrl: devUrlFlag,
-  noBrowser: noBrowserFlag,
-  authToken: authTokenFlag,
-  autoBootstrapProjectFromCwd: autoBootstrapProjectFromCwdFlag,
-  logWebSocketEvents: logWebSocketEventsFlag,
-}).pipe(
-  Command.withDescription("Run the T3 Code server."),
-  Command.withHandler((input) => Effect.scoped(makeServerProgram(input))),
+const skillsEnabledFlag = Flag.boolean("skills-enabled").pipe(
+  Flag.withDescription("Enable remote skills install and lifecycle management."),
+  Flag.optional,
 );
+
+const defaultRunServer = (input: CliInput) => Effect.scoped(makeServerProgram(input));
+
+export const makeT3Cli = <E, R>(
+  runServer: (input: CliInput) => Effect.Effect<void, E, R> = defaultRunServer as (
+    input: CliInput,
+  ) => Effect.Effect<void, E, R>,
+) =>
+  Command.make("t3", {
+    mode: modeFlag,
+    port: portFlag,
+    host: hostFlag,
+    stateDir: stateDirFlag,
+    devUrl: devUrlFlag,
+    noBrowser: noBrowserFlag,
+    authToken: authTokenFlag,
+    autoBootstrapProjectFromCwd: autoBootstrapProjectFromCwdFlag,
+    logWebSocketEvents: logWebSocketEventsFlag,
+    skillsEnabled: skillsEnabledFlag,
+  }).pipe(
+    Command.withDescription("Run the T3 Code server."),
+    Command.withHandler((input) => runServer(input)),
+  );
+
+export const t3Cli = makeT3Cli(defaultRunServer);
