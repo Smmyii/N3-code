@@ -122,6 +122,8 @@ export class SkillRegistry extends ServiceMap.Service<SkillRegistry, SkillRegist
   "t3/skills/Services/SkillRegistry",
 ) {}
 
+const isSkillRegistryError = Schema.is(SkillRegistryError);
+
 function mapErrorCode(error: unknown): SkillOperationFailureCode {
   const message =
     error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
@@ -153,6 +155,9 @@ function toSkillRegistryError(
   fallback: string,
   codeOverride?: SkillOperationFailureCode,
 ): SkillRegistryError {
+  if (isSkillRegistryError(error)) {
+    return error;
+  }
   const code = codeOverride ?? mapErrorCode(error);
   const message =
     error instanceof Error && error.message.trim().length > 0 ? error.message : fallback;

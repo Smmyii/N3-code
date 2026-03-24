@@ -403,6 +403,66 @@ describe("SkillRegistry", () => {
     }
   });
 
+  it("preserves permission_denied when skills management is disabled", async () => {
+    const workspaceRoot = await makeTempDir("t3-skill-workspace-");
+    const baseDir = await makeTempDir("t3-skill-disabled-state-");
+    const stateDir = appStateDir(baseDir);
+    const codexHome = await makeTempDir("t3-skill-codex-home-");
+
+    try {
+      const runtimeLayer = SkillRegistryLive.pipe(
+        Layer.provideMerge(
+          Layer.succeed(ServerConfig, {
+            cwd: workspaceRoot,
+            baseDir,
+            stateDir,
+            dbPath: path.join(stateDir, "state.sqlite"),
+            keybindingsConfigPath: path.join(stateDir, "keybindings.json"),
+            worktreesDir: path.join(baseDir, "worktrees"),
+            attachmentsDir: path.join(stateDir, "attachments"),
+            logsDir: path.join(stateDir, "logs"),
+            serverLogPath: path.join(stateDir, "logs", "server.log"),
+            providerLogsDir: path.join(stateDir, "logs", "provider"),
+            providerEventLogPath: path.join(stateDir, "logs", "provider", "events.log"),
+            terminalLogsDir: path.join(stateDir, "logs", "terminals"),
+            anonymousIdPath: path.join(stateDir, "anonymous-id"),
+            mode: "web",
+            port: 0,
+            host: undefined,
+            staticDir: undefined,
+            devUrl: undefined,
+            noBrowser: false,
+            authToken: undefined,
+            autoBootstrapProjectFromCwd: false,
+            logWebSocketEvents: false,
+            skillsEnabled: false,
+          }),
+        ),
+        Layer.provideMerge(NodeServices.layer),
+        Layer.provideMerge(AnalyticsService.layerTest),
+      );
+
+      await expect(
+        Effect.runPromise(
+          Effect.gen(function* () {
+            const registry = yield* SkillRegistry;
+            return yield* registry.install({
+              url: "https://skills.sh/openai/codex/copywriter",
+              provider: "codex",
+              kind: "skill",
+              scope: "global",
+              codexHomePath: codexHome,
+            });
+          }).pipe(Effect.provide(runtimeLayer)),
+        ),
+      ).rejects.toMatchObject({ code: "permission_denied" });
+    } finally {
+      await fs.rm(workspaceRoot, { recursive: true, force: true });
+      await fs.rm(baseDir, { recursive: true, force: true });
+      await fs.rm(codexHome, { recursive: true, force: true });
+    }
+  });
+
   it("classifies symlinked archives as archive_invalid", async () => {
     const workspaceRoot = await makeTempDir("t3-skill-workspace-");
     const stateDir = await makeTempDir("t3-skill-state-");
