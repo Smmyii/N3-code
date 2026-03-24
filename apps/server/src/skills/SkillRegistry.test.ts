@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { Effect, Layer } from "effect";
@@ -17,6 +18,33 @@ async function makeTempDir(prefix: string): Promise<string> {
 
 function appStateDir(baseDir: string): string {
   return path.join(baseDir, "userdata");
+}
+
+async function createSkillArchive(params: {
+  slug: string;
+  markdown: string;
+  symlinkName?: string;
+}): Promise<Buffer> {
+  const archiveRoot = await makeTempDir("t3-skill-archive-");
+
+  try {
+    const repoRoot = path.join(archiveRoot, "repo-main");
+    const skillRoot = path.join(repoRoot, params.slug);
+    await fs.mkdir(skillRoot, { recursive: true });
+    await fs.writeFile(path.join(skillRoot, "SKILL.md"), params.markdown, "utf8");
+    if (params.symlinkName) {
+      await fs.symlink("SKILL.md", path.join(skillRoot, params.symlinkName));
+    }
+
+    const archivePath = path.join(archiveRoot, "repo.tar.gz");
+    const tar = spawnSync("tar", ["-czf", archivePath, "-C", archiveRoot, "repo-main"]);
+    if (tar.status !== 0) {
+      throw new Error(tar.stderr.toString("utf8") || "Failed to create skill archive.");
+    }
+    return await fs.readFile(archivePath);
+  } finally {
+    await fs.rm(archiveRoot, { recursive: true, force: true });
+  }
 }
 
 describe("SkillRegistry", () => {
@@ -372,6 +400,164 @@ describe("SkillRegistry", () => {
       await fs.rm(stateDir, { recursive: true, force: true });
       await fs.rm(codexHome, { recursive: true, force: true });
       await fs.rm(fakeHome, { recursive: true, force: true });
+    }
+  });
+
+  it("classifies symlinked archives as archive_invalid", async () => {
+    const workspaceRoot = await makeTempDir("t3-skill-workspace-");
+    const stateDir = await makeTempDir("t3-skill-state-");
+    const codexHome = await makeTempDir("t3-skill-codex-home-");
+    const archive = await createSkillArchive({
+      slug: "copywriter",
+      markdown: "# Copywriter\n\nWrites sharp product copy.\n",
+      symlinkName: "linked-skill.md",
+    });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL) => {
+        const url = input.toString();
+        if (url === "https://skills.sh/openai/codex/copywriter") {
+          return new Response(
+            [
+              '<html><head><link rel="canonical" href="https://skills.sh/openai/codex/copywriter"></head>',
+              "<body><h1>Copywriter</h1>",
+              "<code>npx skills add openai/codex --skill copywriter</code>",
+              "</body></html>",
+            ].join(""),
+            { status: 200 },
+          );
+        }
+        if (url === "https://api.github.com/repos/openai/codex") {
+          return new Response(JSON.stringify({ default_branch: "main" }), { status: 200 });
+        }
+        if (url === "https://api.github.com/repos/openai/codex/commits/main") {
+          return new Response(JSON.stringify({ sha: "archive-test-sha" }), { status: 200 });
+        }
+        if (url === "https://api.github.com/repos/openai/codex/tarball/archive-test-sha") {
+          return new Response(archive, {
+            status: 200,
+            headers: { "content-length": String(archive.byteLength) },
+          });
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      }),
+    );
+
+    try {
+      const runtimeLayer = SkillRegistryLive.pipe(
+        Layer.provideMerge(
+          ServerConfig.layerTest(workspaceRoot, stateDir).pipe(
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ),
+        Layer.provideMerge(AnalyticsService.layerTest),
+      );
+
+      await expect(
+        Effect.runPromise(
+          Effect.gen(function* () {
+            const registry = yield* SkillRegistry;
+            return yield* registry.install({
+              url: "https://skills.sh/openai/codex/copywriter",
+              provider: "codex",
+              kind: "skill",
+              scope: "global",
+              codexHomePath: codexHome,
+            });
+          }).pipe(Effect.provide(runtimeLayer)),
+        ),
+      ).rejects.toMatchObject({ code: "archive_invalid" });
+    } finally {
+      await fs.rm(workspaceRoot, { recursive: true, force: true });
+      await fs.rm(stateDir, { recursive: true, force: true });
+      await fs.rm(codexHome, { recursive: true, force: true });
+    }
+  });
+
+  it("records lastUpgradeAt on the first upgrade", async () => {
+    const workspaceRoot = await makeTempDir("t3-skill-workspace-");
+    const stateDir = await makeTempDir("t3-skill-state-");
+    const codexHome = await makeTempDir("t3-skill-codex-home-");
+    const archive = await createSkillArchive({
+      slug: "copywriter",
+      markdown: "# Copywriter\n\nWrites sharp product copy.\n",
+    });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL) => {
+        const url = input.toString();
+        if (url === "https://skills.sh/openai/codex/copywriter") {
+          return new Response(
+            [
+              '<html><head><link rel="canonical" href="https://skills.sh/openai/codex/copywriter"></head>',
+              "<body><h1>Copywriter</h1>",
+              "<code>npx skills add openai/codex --skill copywriter</code>",
+              "</body></html>",
+            ].join(""),
+            { status: 200 },
+          );
+        }
+        if (url === "https://api.github.com/repos/openai/codex") {
+          return new Response(JSON.stringify({ default_branch: "main" }), { status: 200 });
+        }
+        if (url === "https://api.github.com/repos/openai/codex/commits/main") {
+          return new Response(JSON.stringify({ sha: "upgrade-test-sha" }), { status: 200 });
+        }
+        if (url === "https://api.github.com/repos/openai/codex/tarball/upgrade-test-sha") {
+          return new Response(archive, {
+            status: 200,
+            headers: { "content-length": String(archive.byteLength) },
+          });
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      }),
+    );
+
+    try {
+      const runtimeLayer = SkillRegistryLive.pipe(
+        Layer.provideMerge(
+          ServerConfig.layerTest(workspaceRoot, stateDir).pipe(
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ),
+        Layer.provideMerge(AnalyticsService.layerTest),
+      );
+
+      const upgraded = await Effect.runPromise(
+        Effect.gen(function* () {
+          const registry = yield* SkillRegistry;
+          const installed = yield* registry.install({
+            url: "https://skills.sh/openai/codex/copywriter",
+            provider: "codex",
+            kind: "skill",
+            scope: "global",
+            codexHomePath: codexHome,
+          });
+          return yield* registry.upgrade({
+            installPath: installed.item.installPath,
+            codexHomePath: codexHome,
+          });
+        }).pipe(Effect.provide(runtimeLayer)),
+      );
+
+      const installPath = path.join(codexHome, "skills", "copywriter");
+      const provenancePath = path.join(
+        appStateDir(stateDir),
+        "skills",
+        provenanceFileName(installPath),
+      );
+      const provenance = JSON.parse(await fs.readFile(provenancePath, "utf8")) as {
+        lastUpgradeAt?: string;
+      };
+
+      expect(upgraded.item.lastUpgradeAt).toBeTruthy();
+      expect(provenance.lastUpgradeAt).toBeTruthy();
+    } finally {
+      await fs.rm(workspaceRoot, { recursive: true, force: true });
+      await fs.rm(stateDir, { recursive: true, force: true });
+      await fs.rm(codexHome, { recursive: true, force: true });
     }
   });
 

@@ -46,6 +46,7 @@ interface CliInput {
   readonly autoBootstrapProjectFromCwd: Option.Option<boolean>;
   readonly logWebSocketEvents: Option.Option<boolean>;
   readonly skillsEnabled: Option.Option<boolean>;
+  readonly noSkillsEnabled: Option.Option<boolean>;
 }
 
 /**
@@ -171,7 +172,10 @@ export const makeServerConfigLayer = (input: CliInput) =>
         input.logWebSocketEvents,
         env.logWebSocketEvents ?? Boolean(devUrl),
       );
-      const skillsEnabled = resolveBooleanFlag(input.skillsEnabled, env.skillsEnabled ?? true);
+      const skillsEnabled = Option.match(Option.filter(input.noSkillsEnabled, Boolean), {
+        onNone: () => resolveBooleanFlag(input.skillsEnabled, env.skillsEnabled ?? true),
+        onSome: () => false,
+      });
       const staticDir = devUrl ? undefined : yield* cliConfig.resolveStaticDir;
       const host =
         Option.getOrUndefined(input.host) ??
@@ -368,6 +372,10 @@ const skillsEnabledFlag = Flag.boolean("skills-enabled").pipe(
   Flag.withDescription("Enable remote skills install and lifecycle management."),
   Flag.optional,
 );
+const noSkillsEnabledFlag = Flag.boolean("no-skills-enabled").pipe(
+  Flag.withDescription("Disable remote skills install and lifecycle management."),
+  Flag.optional,
+);
 
 const defaultRunServer = (input: CliInput) => Effect.scoped(makeServerProgram(input));
 
@@ -387,6 +395,7 @@ export const makeT3Cli = <E, R>(
     autoBootstrapProjectFromCwd: autoBootstrapProjectFromCwdFlag,
     logWebSocketEvents: logWebSocketEventsFlag,
     skillsEnabled: skillsEnabledFlag,
+    noSkillsEnabled: noSkillsEnabledFlag,
   }).pipe(
     Command.withDescription("Run the T3 Code server."),
     Command.withHandler((input) => runServer(input)),

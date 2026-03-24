@@ -125,12 +125,14 @@ export class SkillRegistry extends ServiceMap.Service<SkillRegistry, SkillRegist
 function mapErrorCode(error: unknown): SkillOperationFailureCode {
   const message =
     error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
-  if (message.includes("skills.sh") || message.includes("supported")) return "unsupported_source";
+  if (message.includes("archive") || message.includes("symlink")) return "archive_invalid";
+  if (message.includes("skills.sh") || message.includes("unsupported source")) {
+    return "unsupported_source";
+  }
   if (message.includes("github") || message.includes("resolve")) return "resolution_failed";
   if (message.includes("download") || message.includes("network") || message.includes("fetch")) {
     return "network_failed";
   }
-  if (message.includes("archive") || message.includes("symlink")) return "archive_invalid";
   if (message.includes("skill root") || message.includes("locate skill")) {
     return "skill_root_not_found";
   }
@@ -1044,7 +1046,7 @@ export const SkillRegistryLive = Layer.effect(
         ...(params.existing?.lastKnownRemoteCommitSha
           ? { lastKnownRemoteCommitSha: params.existing.lastKnownRemoteCommitSha }
           : { lastKnownRemoteCommitSha: params.source.commitSha }),
-        ...(params.existing?.lastUpgradeAt ? { lastUpgradeAt: now } : {}),
+        ...(params.existing ? { lastUpgradeAt: now } : {}),
       };
       await provenanceStore.write(record);
       const metadata = deriveInstalledItemMetadata({

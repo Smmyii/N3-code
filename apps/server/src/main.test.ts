@@ -208,6 +208,18 @@ it.layer(testLayer)("server CLI command", (it) => {
     }),
   );
 
+  it.effect("respects --no-skills-enabled when the environment enables skills", () =>
+    Effect.gen(function* () {
+      yield* runCli(["--no-skills-enabled"], {
+        T3CODE_ENABLE_SKILLS: "true",
+        T3CODE_NO_BROWSER: "true",
+      });
+
+      assert.equal(start.mock.calls.length, 1);
+      assert.equal(resolvedConfig?.skillsEnabled, false);
+    }),
+  );
+
   it.effect("uses dynamic port discovery in web mode when port is omitted", () =>
     Effect.gen(function* () {
       findAvailablePort.mockImplementation((_preferred: number) => Effect.succeed(5444));
@@ -317,6 +329,7 @@ it.layer(testLayer)("server CLI command", (it) => {
         autoBootstrapProjectFromCwd: Option.some(false),
         logWebSocketEvents: Option.some(false),
         skillsEnabled: Option.some(true),
+        noSkillsEnabled: Option.some(false),
       }).pipe(
         Layer.provideMerge(CliConfig.layer),
         Layer.provideMerge(OpenLiveTest),
