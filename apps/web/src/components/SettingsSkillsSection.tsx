@@ -1254,12 +1254,6 @@ export function SettingsSkillsSection(props: {
               {installSkillMutation.isPending ? "Installing\u2026" : "Install"}
             </Button>
           </div>
-
-          {skillsError ? (
-            <div className="mt-3 rounded-lg border border-destructive/30 bg-destructive/8 px-3 py-2 text-xs text-destructive">
-              {skillsError}
-            </div>
-          ) : null}
         </TabsContent>
       </Tabs>
 

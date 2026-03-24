@@ -213,7 +213,7 @@ function SettingsRouteView() {
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
   const availableEditors = serverConfigQuery.data?.availableEditors;
   const workspaceRoot = serverConfigQuery.data?.cwd ?? null;
-  const skillsEnabled = serverConfigQuery.data?.skillsEnabled ?? true;
+  const skillsEnabled = serverConfigQuery.data?.skillsEnabled ?? false;
 
   const gitTextGenerationModelOptions = getAppModelOptions(
     "codex",
