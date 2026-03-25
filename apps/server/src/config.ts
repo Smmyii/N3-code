@@ -44,6 +44,7 @@ export interface ServerConfigShape extends ServerDerivedPaths {
   readonly authToken: string | undefined;
   readonly autoBootstrapProjectFromCwd: boolean;
   readonly logWebSocketEvents: boolean;
+  readonly skillsEnabled: boolean;
 }
 
 export const deriveServerPaths = Effect.fn(function* (
@@ -107,6 +108,7 @@ export class ServerConfig extends ServiceMap.Service<ServerConfig, ServerConfigS
           staticDir: undefined,
           devUrl,
           noBrowser: false,
+          skillsEnabled: true,
         } satisfies ServerConfigShape;
       }),
     );

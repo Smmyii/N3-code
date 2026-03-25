@@ -27,6 +27,33 @@ import type {
 } from "./project";
 import type { ServerConfig } from "./server";
 import type {
+  SkillsAdoptInput,
+  SkillsAdoptPreview,
+  SkillsAdoptResult,
+  SkillsPreviewAdoptInput,
+  SkillsRepairManagedLinksInput,
+  SkillsRepairManagedLinksResult,
+  SkillsSetEnabledInput,
+  SkillsSetEnabledResult,
+  SkillsInstallInput,
+  SkillsPreviewInstallInput,
+  SkillsInstallPreview,
+  SkillsInstallResult,
+  SkillsListInput,
+  SkillsInventory,
+  SkillsRefreshInput,
+  SkillsRemoveInput,
+  SkillsRemoveResult,
+  SkillsCheckUpdatesInput,
+  SkillsCheckUpdatesResult,
+  SkillsUpgradeInput,
+  SkillsUpgradeResult,
+  SkillsReinstallInput,
+  SkillsReinstallResult,
+  SkillsStopManagingInput,
+  SkillsStopManagingResult,
+} from "./skills";
+import type {
   TerminalClearInput,
   TerminalCloseInput,
   TerminalEvent,
@@ -161,6 +188,23 @@ export interface NativeApi {
   server: {
     getConfig: () => Promise<ServerConfig>;
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
+  };
+  skills: {
+    list: (input: SkillsListInput) => Promise<SkillsInventory>;
+    previewInstall: (input: SkillsPreviewInstallInput) => Promise<SkillsInstallPreview>;
+    install: (input: SkillsInstallInput) => Promise<SkillsInstallResult>;
+    remove: (input: SkillsRemoveInput) => Promise<SkillsRemoveResult>;
+    refresh: (input: SkillsRefreshInput) => Promise<SkillsInventory>;
+    checkUpdates: (input: SkillsCheckUpdatesInput) => Promise<SkillsCheckUpdatesResult>;
+    upgrade: (input: SkillsUpgradeInput) => Promise<SkillsUpgradeResult>;
+    reinstall: (input: SkillsReinstallInput) => Promise<SkillsReinstallResult>;
+    previewAdopt: (input: SkillsPreviewAdoptInput) => Promise<SkillsAdoptPreview>;
+    adopt: (input: SkillsAdoptInput) => Promise<SkillsAdoptResult>;
+    setEnabled: (input: SkillsSetEnabledInput) => Promise<SkillsSetEnabledResult>;
+    repairManagedLinks: (
+      input: SkillsRepairManagedLinksInput,
+    ) => Promise<SkillsRepairManagedLinksResult>;
+    stopManaging: (input: SkillsStopManagingInput) => Promise<SkillsStopManagingResult>;
   };
   orchestration: {
     getSnapshot: () => Promise<OrchestrationReadModel>;

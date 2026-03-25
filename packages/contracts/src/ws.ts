@@ -38,6 +38,21 @@ import { KeybindingRule } from "./keybindings";
 import { ProjectSearchEntriesInput, ProjectWriteFileInput } from "./project";
 import { OpenInEditorInput } from "./editor";
 import { ServerConfigUpdatedPayload } from "./server";
+import {
+  SkillsAdoptInput,
+  SkillsInstallInput,
+  SkillsPreviewInstallInput,
+  SkillsListInput,
+  SkillsRefreshInput,
+  SkillsRemoveInput,
+  SkillsCheckUpdatesInput,
+  SkillsUpgradeInput,
+  SkillsReinstallInput,
+  SkillsPreviewAdoptInput,
+  SkillsSetEnabledInput,
+  SkillsRepairManagedLinksInput,
+  SkillsStopManagingInput,
+} from "./skills";
 
 // ── WebSocket RPC Method Names ───────────────────────────────────────
 
@@ -76,6 +91,21 @@ export const WS_METHODS = {
   // Server meta
   serverGetConfig: "server.getConfig",
   serverUpsertKeybinding: "server.upsertKeybinding",
+
+  // Skills
+  skillsList: "skills.list",
+  skillsPreviewInstall: "skills.previewInstall",
+  skillsInstall: "skills.install",
+  skillsRemove: "skills.remove",
+  skillsRefresh: "skills.refresh",
+  skillsCheckUpdates: "skills.checkUpdates",
+  skillsUpgrade: "skills.upgrade",
+  skillsReinstall: "skills.reinstall",
+  skillsPreviewAdopt: "skills.previewAdopt",
+  skillsAdopt: "skills.adopt",
+  skillsSetEnabled: "skills.setEnabled",
+  skillsRepairManagedLinks: "skills.repairManagedLinks",
+  skillsStopManaging: "skills.stopManaging",
 } as const;
 
 // ── Push Event Channels ──────────────────────────────────────────────
@@ -141,6 +171,21 @@ const WebSocketRequestBody = Schema.Union([
   // Server meta
   tagRequestBody(WS_METHODS.serverGetConfig, Schema.Struct({})),
   tagRequestBody(WS_METHODS.serverUpsertKeybinding, KeybindingRule),
+
+  // Skills
+  tagRequestBody(WS_METHODS.skillsList, SkillsListInput),
+  tagRequestBody(WS_METHODS.skillsPreviewInstall, SkillsPreviewInstallInput),
+  tagRequestBody(WS_METHODS.skillsInstall, SkillsInstallInput),
+  tagRequestBody(WS_METHODS.skillsRemove, SkillsRemoveInput),
+  tagRequestBody(WS_METHODS.skillsRefresh, SkillsRefreshInput),
+  tagRequestBody(WS_METHODS.skillsCheckUpdates, SkillsCheckUpdatesInput),
+  tagRequestBody(WS_METHODS.skillsUpgrade, SkillsUpgradeInput),
+  tagRequestBody(WS_METHODS.skillsReinstall, SkillsReinstallInput),
+  tagRequestBody(WS_METHODS.skillsPreviewAdopt, SkillsPreviewAdoptInput),
+  tagRequestBody(WS_METHODS.skillsAdopt, SkillsAdoptInput),
+  tagRequestBody(WS_METHODS.skillsSetEnabled, SkillsSetEnabledInput),
+  tagRequestBody(WS_METHODS.skillsRepairManagedLinks, SkillsRepairManagedLinksInput),
+  tagRequestBody(WS_METHODS.skillsStopManaging, SkillsStopManagingInput),
 ]);
 
 export const WebSocketRequest = Schema.Struct({
@@ -155,6 +200,8 @@ export const WebSocketResponse = Schema.Struct({
   error: Schema.optional(
     Schema.Struct({
       message: Schema.String,
+      code: Schema.optional(TrimmedNonEmptyString),
+      details: Schema.optional(Schema.Unknown),
     }),
   ),
 });

@@ -34,6 +34,7 @@ import { useNavigate, useSearch } from "@tanstack/react-router";
 import { gitBranchesQueryOptions, gitCreateWorktreeMutationOptions } from "~/lib/gitReactQuery";
 import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
 import { serverConfigQueryOptions, serverQueryKeys } from "~/lib/serverReactQuery";
+import { invalidateSkillsQueries, skillsInventoryQueryOptions } from "~/lib/skillsReactQuery";
 import { isElectron } from "../env";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import {
@@ -119,7 +120,7 @@ import {
 } from "~/projectScripts";
 import { SidebarTrigger } from "./ui/sidebar";
 import { newCommandId, newMessageId, newThreadId } from "~/lib/utils";
-import { readNativeApi } from "~/nativeApi";
+import { ensureNativeApi, readNativeApi } from "~/nativeApi";
 import {
   getCustomModelOptionsByProvider,
   getCustomModelsByProvider,
@@ -191,6 +192,7 @@ const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
 const EMPTY_AVAILABLE_EDITORS: EditorId[] = [];
 const EMPTY_PROVIDER_STATUSES: ServerProviderStatus[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
+const EMPTY_SKILLS_INVENTORY = { items: [], warnings: [] } as const;
 
 function formatOutgoingPrompt(params: {
   provider: ProviderKind;
@@ -777,6 +779,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       detectComposerTrigger(
         nextCustomAnswer,
         expandCollapsedComposerCursor(nextCustomAnswer, nextCursor),
+        selectedProvider,
       ),
     );
     setComposerHighlightedItemId(null);
@@ -784,6 +787,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     activePendingProgress?.customAnswer,
     activePendingUserInput?.requestId,
     activePendingProgress?.activeQuestion?.id,
+    selectedProvider,
   ]);
   useEffect(() => {
     attachmentPreviewHandoffByMessageIdRef.current = attachmentPreviewHandoffByMessageId;
@@ -1012,6 +1016,19 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const effectivePathQuery = pathTriggerQuery.length > 0 ? debouncedPathQuery : "";
   const branchesQuery = useQuery(gitBranchesQueryOptions(gitCwd));
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
+  const skillsInventoryQuery = useQuery(
+    skillsInventoryQueryOptions({
+      workspaceRoot: activeProject?.cwd ?? null,
+      codexHomePath: settings.codexHomePath || null,
+    }),
+  );
+  useEffect(() => {
+    void invalidateSkillsQueries(queryClient, {
+      workspaceRoot: activeProject?.cwd ?? null,
+      codexHomePath: settings.codexHomePath || null,
+      provider: selectedProvider,
+    });
+  }, [activeProject?.cwd, queryClient, selectedProvider, settings.codexHomePath]);
   const workspaceEntriesQuery = useQuery(
     projectSearchEntriesQueryOptions({
       cwd: gitCwd,
@@ -1021,17 +1038,100 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }),
   );
   const workspaceEntries = workspaceEntriesQuery.data?.entries ?? EMPTY_PROJECT_ENTRIES;
+  const skillsInventory = skillsInventoryQuery.data ?? EMPTY_SKILLS_INVENTORY;
+  const installedSkillsForProvider = useMemo(
+    () =>
+      skillsInventory.items.filter(
+        (item) =>
+          item.provider === selectedProvider &&
+          item.kind === "skill" &&
+          item.managedStatus !== "disabled" &&
+          item.managedStatus !== "broken",
+      ),
+    [selectedProvider, skillsInventory.items],
+  );
+  const installedSkillSlugSetForProvider = useMemo(
+    () => new Set(installedSkillsForProvider.map((item) => item.slug)),
+    [installedSkillsForProvider],
+  );
+  const installedClaudeSubagents = useMemo(
+    () =>
+      skillsInventory.items.filter(
+        (item) =>
+          item.provider === "claudeAgent" &&
+          item.kind === "subagent" &&
+          item.managedStatus !== "disabled" &&
+          item.managedStatus !== "broken",
+      ),
+    [skillsInventory.items],
+  );
+  const installedSubagentsForProvider = useMemo(
+    () =>
+      selectedProvider === "claudeAgent"
+        ? installedClaudeSubagents
+        : ([] as typeof installedClaudeSubagents),
+    [installedClaudeSubagents, selectedProvider],
+  );
+  const installedSubagentSlugSetForProvider = useMemo(
+    () => new Set(installedSubagentsForProvider.map((item) => item.slug)),
+    [installedSubagentsForProvider],
+  );
   const composerMenuItems = useMemo<ComposerCommandItem[]>(() => {
     if (!composerTrigger) return [];
     if (composerTrigger.kind === "path") {
-      return workspaceEntries.map((entry) => ({
+      const subagentItems =
+        selectedProvider === "claudeAgent"
+          ? installedSubagentsForProvider
+              .filter((item) => {
+                const query = composerTrigger.query.trim().toLowerCase();
+                if (!query) return true;
+                return (
+                  item.slug.toLowerCase().includes(query) ||
+                  item.displayName.toLowerCase().includes(query) ||
+                  item.description?.toLowerCase().includes(query)
+                );
+              })
+              .map((item) => ({
+                id: `subagent:${item.provider}:${item.scope}:${item.slug}`,
+                type: "subagent" as const,
+                provider: item.provider,
+                slug: item.slug,
+                label: item.displayName,
+                description: item.description ?? item.slug,
+                section: "subagents" as const,
+              }))
+          : [];
+      const pathItems = workspaceEntries.map((entry) => ({
         id: `path:${entry.kind}:${entry.path}`,
-        type: "path",
+        type: "path" as const,
         path: entry.path,
         pathKind: entry.kind,
         label: basenameOfPath(entry.path),
         description: entry.parentPath ?? "",
+        section: "files" as const,
       }));
+      return [...subagentItems, ...pathItems];
+    }
+
+    if (composerTrigger.kind === "skill") {
+      const query = composerTrigger.query.trim().toLowerCase();
+      return installedSkillsForProvider
+        .filter((item) => {
+          if (!query) return true;
+          return (
+            item.slug.toLowerCase().includes(query) ||
+            item.displayName.toLowerCase().includes(query) ||
+            item.description?.toLowerCase().includes(query)
+          );
+        })
+        .map((item) => ({
+          id: `skill:${item.provider}:${item.scope}:${item.slug}`,
+          type: "skill" as const,
+          provider: item.provider,
+          slug: item.slug,
+          label: item.displayName,
+          description: item.description ?? item.slug,
+        }));
     }
 
     if (composerTrigger.kind === "slash-command") {
@@ -1083,7 +1183,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
         label: name,
         description: `${providerLabel} · ${slug}`,
       }));
-  }, [composerTrigger, searchableModelOptions, workspaceEntries]);
+  }, [
+    composerTrigger,
+    installedSkillsForProvider,
+    installedSubagentsForProvider,
+    searchableModelOptions,
+    selectedProvider,
+    workspaceEntries,
+  ]);
   const composerMenuOpen = Boolean(composerTrigger);
   const activeComposerMenuItem = useMemo(
     () =>
@@ -1102,6 +1209,84 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const keybindings = serverConfigQuery.data?.keybindings ?? EMPTY_KEYBINDINGS;
   const availableEditors = serverConfigQuery.data?.availableEditors ?? EMPTY_AVAILABLE_EDITORS;
   const providerStatuses = serverConfigQuery.data?.providers ?? EMPTY_PROVIDER_STATUSES;
+  const installedClaudeSubagentSlugSet = useMemo(
+    () => new Set(installedClaudeSubagents.map((item) => item.slug)),
+    [installedClaudeSubagents],
+  );
+  const inlineTokenResolutionVersion = useMemo(
+    () =>
+      [
+        selectedProvider,
+        [...installedSkillSlugSetForProvider].toSorted().join(","),
+        [...installedSubagentSlugSetForProvider].toSorted().join(","),
+      ].join("|"),
+    [installedSkillSlugSetForProvider, installedSubagentSlugSetForProvider, selectedProvider],
+  );
+  const resolveInlineToken = useCallback(
+    (
+      prefix: "@" | "$",
+      value: string,
+      existingKind?: "path" | "skill" | "subagent",
+    ): { kind?: "path" | "skill" | "subagent"; status?: "default" | "missing" } | undefined => {
+      // Legacy $skill tokens still resolve correctly (backward compat)
+      if (prefix === "$") {
+        return {
+          kind: "skill",
+          status:
+            existingKind === "skill" && !installedSkillSlugSetForProvider.has(value)
+              ? "missing"
+              : "default",
+        };
+      }
+      // @ prefix in Claude mode: check subagents first, then paths
+      if (selectedProvider === "claudeAgent") {
+        if (installedSubagentSlugSetForProvider.has(value)) {
+          return { kind: "subagent", status: "default" };
+        }
+        if (existingKind === "subagent") {
+          return { kind: "subagent", status: "missing" };
+        }
+      }
+      return { kind: "path", status: "default" };
+    },
+    [installedSkillSlugSetForProvider, installedSubagentSlugSetForProvider, selectedProvider],
+  );
+  const unresolvedInlineTokenWarning = useMemo(() => {
+    const skillMatches = Array.from(prompt.matchAll(/(^|\s)\$([^\s$]+)(?=\s|$)/g))
+      .map((match) => match[2] ?? "")
+      .filter((slug) => !installedSkillSlugSetForProvider.has(slug));
+    const subagentMatches =
+      selectedProvider === "claudeAgent"
+        ? Array.from(prompt.matchAll(/(^|\s)@([^\s@]+)(?=\s|$)/g))
+            .map((match) => match[2] ?? "")
+            .filter((slug) => !installedSubagentSlugSetForProvider.has(slug))
+        : [];
+    if (skillMatches.length === 0 && subagentMatches.length === 0) {
+      return null;
+    }
+    return "Some skill or subagent tokens no longer resolve for the active provider. They will be sent as plain text.";
+  }, [
+    installedSkillSlugSetForProvider,
+    installedSubagentSlugSetForProvider,
+    prompt,
+    selectedProvider,
+  ]);
+  const codexSubagentCompatibilityWarning = useMemo(() => {
+    if (selectedProvider !== "codex") {
+      return null;
+    }
+    const matches = Array.from(prompt.matchAll(/(^|\s)@([^\s@]+)(?=\s|$)/g))
+      .map((match) => match[2] ?? "")
+      .filter((slug) => installedClaudeSubagentSlugSet.has(slug));
+    if (matches.length === 0) {
+      return null;
+    }
+    return `Claude subagent token${matches.length === 1 ? "" : "s"} detected. Codex will receive ${
+      matches.length === 1 ? "it" : "them"
+    } as plain text.`;
+  }, [installedClaudeSubagentSlugSet, prompt, selectedProvider]);
+  const composerInlineWarning =
+    codexSubagentCompatibilityWarning ?? (composerTrigger ? null : unresolvedInlineTokenWarning);
   const activeProviderStatus = useMemo(
     () => providerStatuses.find((status) => status.provider === selectedProvider) ?? null,
     [selectedProvider, providerStatuses],
@@ -1229,12 +1414,20 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
       promptRef.current = insertion.prompt;
       setComposerCursor(nextCollapsedCursor);
-      setComposerTrigger(detectComposerTrigger(insertion.prompt, insertion.cursor));
+      setComposerTrigger(
+        detectComposerTrigger(insertion.prompt, insertion.cursor, selectedProvider),
+      );
       window.requestAnimationFrame(() => {
         composerEditorRef.current?.focusAt(nextCollapsedCursor);
       });
     },
-    [activeThread, composerCursor, composerTerminalContexts, insertComposerDraftTerminalContext],
+    [
+      activeThread,
+      composerCursor,
+      composerTerminalContexts,
+      insertComposerDraftTerminalContext,
+      selectedProvider,
+    ],
   );
   const setTerminalOpen = useCallback(
     (open: boolean) => {
@@ -1918,11 +2111,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
     setSendStartedAt(null);
     setComposerHighlightedItemId(null);
     setComposerCursor(collapseExpandedComposerCursor(promptRef.current, promptRef.current.length));
-    setComposerTrigger(detectComposerTrigger(promptRef.current, promptRef.current.length));
+    setComposerTrigger(
+      detectComposerTrigger(promptRef.current, promptRef.current.length, selectedProvider),
+    );
     dragDepthRef.current = 0;
     setIsDragOverComposer(false);
     setExpandedImage(null);
-  }, [threadId]);
+  }, [selectedProvider, threadId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2654,7 +2849,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
         setComposerCursor(collapseExpandedComposerCursor(promptForSend, promptForSend.length));
         addComposerImagesToDraft(composerImagesSnapshot.map(cloneComposerImageForRetry));
         addComposerTerminalContextsToDraft(composerTerminalContextsSnapshot);
-        setComposerTrigger(detectComposerTrigger(promptForSend, promptForSend.length));
+        setComposerTrigger(
+          detectComposerTrigger(promptForSend, promptForSend.length, selectedProvider),
+        );
       }
       setThreadError(
         threadIdForSend,
@@ -2793,10 +2990,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }));
       setComposerCursor(nextCursor);
       setComposerTrigger(
-        cursorAdjacentToMention ? null : detectComposerTrigger(value, expandedCursor),
+        cursorAdjacentToMention
+          ? null
+          : detectComposerTrigger(value, expandedCursor, selectedProvider),
       );
     },
-    [activePendingUserInput],
+    [activePendingUserInput, selectedProvider],
   );
 
   const onAdvanceActivePendingUserInput = useCallback(() => {
@@ -3120,10 +3319,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
       setPrompt(nextPrompt);
       const nextCursor = collapseExpandedComposerCursor(nextPrompt, nextPrompt.length);
       setComposerCursor(nextCursor);
-      setComposerTrigger(detectComposerTrigger(nextPrompt, nextPrompt.length));
+      setComposerTrigger(detectComposerTrigger(nextPrompt, nextPrompt.length, selectedProvider));
       scheduleComposerFocus();
     },
-    [scheduleComposerFocus, setPrompt],
+    [scheduleComposerFocus, selectedProvider, setPrompt],
   );
   const providerTraitsMenuContent = renderProviderTraitsMenuContent({
     provider: selectedProvider,
@@ -3183,14 +3382,18 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
       setComposerCursor(nextCursor);
       setComposerTrigger(
-        detectComposerTrigger(next.text, expandCollapsedComposerCursor(next.text, nextCursor)),
+        detectComposerTrigger(
+          next.text,
+          expandCollapsedComposerCursor(next.text, nextCursor),
+          selectedProvider,
+        ),
       );
       window.requestAnimationFrame(() => {
         composerEditorRef.current?.focusAt(nextCursor);
       });
       return true;
     },
-    [activePendingProgress?.activeQuestion, activePendingUserInput, setPrompt],
+    [activePendingProgress?.activeQuestion, activePendingUserInput, selectedProvider, setPrompt],
   );
 
   const readComposerSnapshot = useCallback((): {
@@ -3218,9 +3421,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
     const snapshot = readComposerSnapshot();
     return {
       snapshot,
-      trigger: detectComposerTrigger(snapshot.value, snapshot.expandedCursor),
+      trigger: detectComposerTrigger(snapshot.value, snapshot.expandedCursor, selectedProvider),
     };
-  }, [readComposerSnapshot]);
+  }, [readComposerSnapshot, selectedProvider]);
 
   const onSelectComposerItem = useCallback(
     (item: ComposerCommandItem) => {
@@ -3233,6 +3436,25 @@ export default function ChatView({ threadId }: ChatViewProps) {
       if (!trigger) return;
       if (item.type === "path") {
         const replacement = `@${item.path} `;
+        const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+          snapshot.value,
+          trigger.rangeEnd,
+          replacement,
+        );
+        const applied = applyPromptReplacement(
+          trigger.rangeStart,
+          replacementRangeEnd,
+          replacement,
+          { expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd) },
+        );
+        if (applied) {
+          setComposerHighlightedItemId(null);
+        }
+        return;
+      }
+      if (item.type === "skill" || item.type === "subagent") {
+        const prefix = item.type === "skill" ? "$" : "@";
+        const replacement = `${prefix}${item.slug} `;
         const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
           snapshot.value,
           trigger.rangeEnd,
@@ -3275,6 +3497,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
         if (applied) {
           setComposerHighlightedItemId(null);
         }
+        return;
+      }
+      if (item.type !== "model") {
         return;
       }
       onProviderModelSelect(item.provider, item.model);
@@ -3347,7 +3572,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
       setComposerCursor(nextCursor);
       setComposerTrigger(
-        cursorAdjacentToMention ? null : detectComposerTrigger(nextPrompt, expandedCursor),
+        cursorAdjacentToMention
+          ? null
+          : detectComposerTrigger(nextPrompt, expandedCursor, selectedProvider),
       );
     },
     [
@@ -3355,6 +3582,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       activePendingUserInput,
       composerTerminalContexts,
       onChangeActivePendingUserInputCustomAnswer,
+      selectedProvider,
       setPrompt,
       setComposerDraftTerminalContexts,
       threadId,
@@ -3621,14 +3849,24 @@ export default function ChatView({ threadId }: ChatViewProps) {
                     )}
                   >
                     {composerMenuOpen && !isComposerApprovalState && (
-                      <div className="absolute inset-x-0 bottom-full z-20 mb-2 px-1">
+                      <div className="absolute inset-x-0 bottom-full z-40 mb-2 px-1">
                         <ComposerCommandMenu
                           items={composerMenuItems}
+                          activeProvider={selectedProvider}
+                          menuLayout={settings.composerMenuLayout}
                           resolvedTheme={resolvedTheme}
                           isLoading={isComposerMenuLoading}
                           triggerKind={composerTriggerKind}
                           activeItemId={activeComposerMenuItem?.id ?? null}
+                          query={composerTrigger?.query ?? ""}
                           onHighlightedItemChange={onComposerMenuItemHighlighted}
+                          onBrowseSkills={(query) => {
+                            const trimmedQuery = query.trim();
+                            const url = trimmedQuery
+                              ? `https://skills.sh?q=${encodeURIComponent(trimmedQuery)}`
+                              : "https://skills.sh";
+                            void ensureNativeApi().shell.openExternal(url);
+                          }}
                           onSelect={onSelectComposerItem}
                         />
                       </div>
@@ -3664,7 +3902,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                                   />
                                 </button>
                               ) : (
-                                <div className="flex h-full w-full items-center justify-center px-1 text-center text-[10px] text-muted-foreground/70">
+                                <div className="flex h-full w-full items-center justify-center px-1 text-center text-[11px] text-muted-foreground">
                                   {image.name}
                                 </div>
                               )}
@@ -3718,6 +3956,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
                           ? composerTerminalContexts
                           : []
                       }
+                      inlineTokenResolutionVersion={inlineTokenResolutionVersion}
+                      resolveInlineToken={resolveInlineToken}
                       onRemoveTerminalContext={removeComposerTerminalContextFromDraft}
                       onChange={onPromptChange}
                       onCommandKeyDown={onComposerCommandKey}
@@ -3736,6 +3976,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
                       }
                       disabled={isConnecting || isComposerApprovalState}
                     />
+                    {!isComposerApprovalState && composerInlineWarning ? (
+                      <div className="mt-2 rounded-lg border border-amber-500/25 bg-amber-500/8 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+                        {composerInlineWarning}
+                      </div>
+                    ) : null}
                   </div>
 
                   {/* Bottom toolbar */}

@@ -24,6 +24,18 @@ describe("detectComposerTrigger", () => {
     });
   });
 
+  it("detects $skill trigger at cursor", () => {
+    const text = "Use $frontend";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "skill",
+      query: "frontend",
+      rangeStart: "Use ".length,
+      rangeEnd: text.length,
+    });
+  });
+
   it("detects slash command token while typing command name", () => {
     const text = "/mo";
     const trigger = detectComposerTrigger(text, text.length);
@@ -85,6 +97,54 @@ describe("detectComposerTrigger", () => {
       query: "sr",
       rangeStart: "Please inspect ".length,
       rangeEnd: cursorAfterQuery,
+    });
+  });
+
+  it("keeps $ trigger for Claude provider", () => {
+    const text = "Use $frontend";
+    const trigger = detectComposerTrigger(text, text.length, "claudeAgent");
+
+    expect(trigger).toEqual({
+      kind: "skill",
+      query: "frontend",
+      rangeStart: "Use ".length,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("keeps @ as a path trigger for Claude provider", () => {
+    const text = "Please check @src/com";
+    const trigger = detectComposerTrigger(text, text.length, "claudeAgent");
+
+    expect(trigger).toEqual({
+      kind: "path",
+      query: "src/com",
+      rangeStart: "Please check ".length,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("keeps $ trigger for Codex provider", () => {
+    const text = "Use $frontend";
+    const trigger = detectComposerTrigger(text, text.length, "codex");
+
+    expect(trigger).toEqual({
+      kind: "skill",
+      query: "frontend",
+      rangeStart: "Use ".length,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("defaults to path trigger when no provider specified", () => {
+    const text = "Please check @src/com";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "path",
+      query: "src/com",
+      rangeStart: "Please check ".length,
+      rangeEnd: text.length,
     });
   });
 

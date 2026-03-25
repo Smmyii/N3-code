@@ -9,15 +9,16 @@ export type ComposerPromptSegment =
       text: string;
     }
   | {
-      type: "mention";
-      path: string;
+      type: "token";
+      prefix: "@" | "$";
+      value: string;
     }
   | {
       type: "terminal-context";
       context: TerminalContextDraft | null;
     };
 
-const MENTION_TOKEN_REGEX = /(^|\s)@([^\s@]+)(?=\s)/g;
+const INLINE_TOKEN_REGEX = /(^|\s)([@$])([^\s@$]+)(?=\s)/g;
 
 function pushTextSegment(segments: ComposerPromptSegment[], text: string): void {
   if (!text) return;
@@ -36,10 +37,11 @@ function splitPromptTextIntoComposerSegments(text: string): ComposerPromptSegmen
   }
 
   let cursor = 0;
-  for (const match of text.matchAll(MENTION_TOKEN_REGEX)) {
+  for (const match of text.matchAll(INLINE_TOKEN_REGEX)) {
     const fullMatch = match[0];
     const prefix = match[1] ?? "";
-    const path = match[2] ?? "";
+    const tokenPrefix = match[2];
+    const tokenValue = match[3] ?? "";
     const matchIndex = match.index ?? 0;
     const mentionStart = matchIndex + prefix.length;
     const mentionEnd = mentionStart + fullMatch.length - prefix.length;
@@ -48,8 +50,8 @@ function splitPromptTextIntoComposerSegments(text: string): ComposerPromptSegmen
       pushTextSegment(segments, text.slice(cursor, mentionStart));
     }
 
-    if (path.length > 0) {
-      segments.push({ type: "mention", path });
+    if ((tokenPrefix === "@" || tokenPrefix === "$") && tokenValue.length > 0) {
+      segments.push({ type: "token", prefix: tokenPrefix, value: tokenValue });
     } else {
       pushTextSegment(segments, text.slice(mentionStart, mentionEnd));
     }

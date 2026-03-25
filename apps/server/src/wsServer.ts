@@ -23,6 +23,7 @@ import {
   WS_CHANNELS,
   WS_METHODS,
   WebSocketRequest,
+  type WebSocketResponse,
   type WsResponse as WsResponseMessage,
   WsResponse,
   type WsPushEnvelopeBase,
@@ -73,11 +74,11 @@ import {
   resolveAttachmentPathById,
 } from "./attachmentStore.ts";
 import { parseBase64DataUrl } from "./imageMime.ts";
-import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
 import { expandHomePath } from "./os-jank.ts";
 import { makeServerPushBus } from "./wsServer/pushBus.ts";
 import { makeServerReadiness } from "./wsServer/readiness.ts";
 import { decodeJsonResult, formatSchemaError } from "@t3tools/shared/schemaJson";
+import { SkillRegistry } from "./skills/Services/SkillRegistry.ts";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -217,7 +218,7 @@ export type ServerRuntimeServices =
   | TerminalManager
   | Keybindings
   | Open
-  | AnalyticsService;
+  | SkillRegistry;
 
 export class ServerLifecycleError extends Schema.TaggedErrorClass<ServerLifecycleError>()(
   "ServerLifecycleError",
@@ -230,6 +231,26 @@ export class ServerLifecycleError extends Schema.TaggedErrorClass<ServerLifecycl
 class RouteRequestError extends Schema.TaggedErrorClass<RouteRequestError>()("RouteRequestError", {
   message: Schema.String,
 }) {}
+
+function toWsErrorPayload(cause: Cause.Cause<unknown>): NonNullable<WebSocketResponse["error"]> {
+  const squashed = Cause.squash(cause) as {
+    message?: unknown;
+    code?: unknown;
+    details?: unknown;
+  } | null;
+  const message =
+    squashed && typeof squashed.message === "string" && squashed.message.length > 0
+      ? squashed.message
+      : Cause.pretty(cause);
+  const code = squashed && typeof squashed.code === "string" ? squashed.code : undefined;
+  const details = squashed?.details;
+
+  return {
+    message,
+    ...(code ? { code } : {}),
+    ...(details !== undefined ? { details } : {}),
+  };
+}
 
 export const createServer = Effect.fn(function* (): Effect.fn.Return<
   http.Server,
@@ -603,6 +624,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const checkpointDiffQuery = yield* CheckpointDiffQuery;
   const orchestrationReactor = yield* OrchestrationReactor;
   const { openInEditor } = yield* Open;
+  const skillRegistry = yield* SkillRegistry;
 
   const subscriptionsScope = yield* Scope.make("sequential");
   yield* Effect.addFinalizer(() => Scope.close(subscriptionsScope, Exit.void));
@@ -881,12 +903,78 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           issues: keybindingsConfig.issues,
           providers: providerStatuses,
           availableEditors,
+          skillsEnabled: serverConfig.skillsEnabled,
         };
 
       case WS_METHODS.serverUpsertKeybinding: {
         const body = stripRequestTag(request.body);
         const keybindingsConfig = yield* keybindingsManager.upsertKeybindingRule(body);
         return { keybindings: keybindingsConfig, issues: [] };
+      }
+
+      case WS_METHODS.skillsList: {
+        const body = stripRequestTag(request.body);
+        return yield* skillRegistry.list(body);
+      }
+
+      case WS_METHODS.skillsPreviewAdopt: {
+        const body = stripRequestTag(request.body);
+        return yield* skillRegistry.previewAdopt(body);
+      }
+
+      case WS_METHODS.skillsAdopt: {
+        const body = stripRequestTag(request.body);
+        return yield* skillRegistry.adopt(body);
+      }
+
+      case WS_METHODS.skillsPreviewInstall: {
+        const body = stripRequestTag(request.body);
+        return yield* skillRegistry.previewInstall(body);
+      }
+
+      case WS_METHODS.skillsInstall: {
+        const body = stripRequestTag(request.body);
+        return yield* skillRegistry.install(body);
+      }
+
+      case WS_METHODS.skillsRemove: {
+        const body = stripRequestTag(request.body);
+        return yield* skillRegistry.remove(body);
+      }
+
+      case WS_METHODS.skillsRefresh: {
+        const body = stripRequestTag(request.body);
+        return yield* skillRegistry.refresh(body);
+      }
+
+      case WS_METHODS.skillsCheckUpdates: {
+        const body = stripRequestTag(request.body);
+        return yield* skillRegistry.checkUpdates(body);
+      }
+
+      case WS_METHODS.skillsUpgrade: {
+        const body = stripRequestTag(request.body);
+        return yield* skillRegistry.upgrade(body);
+      }
+
+      case WS_METHODS.skillsReinstall: {
+        const body = stripRequestTag(request.body);
+        return yield* skillRegistry.reinstall(body);
+      }
+
+      case WS_METHODS.skillsSetEnabled: {
+        const body = stripRequestTag(request.body);
+        return yield* skillRegistry.setEnabled(body);
+      }
+
+      case WS_METHODS.skillsRepairManagedLinks: {
+        const body = stripRequestTag(request.body);
+        return yield* skillRegistry.repairManagedLinks(body);
+      }
+
+      case WS_METHODS.skillsStopManaging: {
+        const body = stripRequestTag(request.body);
+        return yield* skillRegistry.stopManaging(body);
       }
 
       default: {
@@ -925,7 +1013,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     if (Exit.isFailure(result)) {
       return yield* sendWsResponse({
         id: request.success.id,
-        error: { message: Cause.pretty(result.cause) },
+        error: toWsErrorPayload(result.cause),
       });
     }
 
@@ -1006,7 +1094,44 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   return httpServer;
 });
 
-export const ServerLive = Layer.succeed(Server, {
-  start: createServer(),
-  stopSignal: Effect.never,
-} satisfies ServerShape);
+export const ServerLive = Layer.effect(
+  Server,
+  Effect.gen(function* () {
+    const serverConfig = yield* ServerConfig;
+    const gitManager = yield* GitManager;
+    const terminalManager = yield* TerminalManager;
+    const keybindingsManager = yield* Keybindings;
+    const providerHealth = yield* ProviderHealth;
+    const providerService = yield* ProviderService;
+    const git = yield* GitCore;
+    const orchestrationEngine = yield* OrchestrationEngineService;
+    const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
+    const checkpointDiffQuery = yield* CheckpointDiffQuery;
+    const orchestrationReactor = yield* OrchestrationReactor;
+    const open = yield* Open;
+    const skillRegistry = yield* SkillRegistry;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+
+    return {
+      start: createServer().pipe(
+        Effect.provideService(ServerConfig, serverConfig),
+        Effect.provideService(GitManager, gitManager),
+        Effect.provideService(TerminalManager, terminalManager),
+        Effect.provideService(Keybindings, keybindingsManager),
+        Effect.provideService(ProviderHealth, providerHealth),
+        Effect.provideService(ProviderService, providerService),
+        Effect.provideService(GitCore, git),
+        Effect.provideService(OrchestrationEngineService, orchestrationEngine),
+        Effect.provideService(ProjectionSnapshotQuery, projectionSnapshotQuery),
+        Effect.provideService(CheckpointDiffQuery, checkpointDiffQuery),
+        Effect.provideService(OrchestrationReactor, orchestrationReactor),
+        Effect.provideService(Open, open),
+        Effect.provideService(SkillRegistry, skillRegistry),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+      ),
+      stopSignal: Effect.never,
+    } satisfies ServerShape;
+  }),
+);

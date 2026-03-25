@@ -74,10 +74,16 @@ import { ComposerPendingTerminalContextChip } from "./chat/ComposerPendingTermin
 
 const COMPOSER_EDITOR_HMR_KEY = `composer-editor-${Math.random().toString(36).slice(2)}`;
 
-type SerializedComposerMentionNode = Spread<
+type ComposerInlineTokenKind = "path" | "skill" | "subagent";
+type ComposerInlineTokenStatus = "default" | "missing";
+
+type SerializedComposerInlineTokenNode = Spread<
   {
-    path: string;
-    type: "composer-mention";
+    prefix: "@" | "$";
+    value: string;
+    tokenKind: ComposerInlineTokenKind;
+    tokenStatus: ComposerInlineTokenStatus;
+    type: "composer-inline-token";
     version: 1;
   },
   SerializedTextNode
@@ -98,32 +104,60 @@ const ComposerTerminalContextActionsContext = createContext<{
   onRemoveTerminalContext: () => {},
 });
 
-class ComposerMentionNode extends TextNode {
-  __path: string;
+class ComposerInlineTokenNode extends TextNode {
+  __prefix: "@" | "$";
+  __value: string;
+  __tokenKind: ComposerInlineTokenKind;
+  __tokenStatus: ComposerInlineTokenStatus;
 
   static override getType(): string {
-    return "composer-mention";
+    return "composer-inline-token";
   }
 
-  static override clone(node: ComposerMentionNode): ComposerMentionNode {
-    return new ComposerMentionNode(node.__path, node.__key);
+  static override clone(node: ComposerInlineTokenNode): ComposerInlineTokenNode {
+    return new ComposerInlineTokenNode(
+      node.__prefix,
+      node.__value,
+      node.__tokenKind,
+      node.__tokenStatus,
+      node.__key,
+    );
   }
 
-  static override importJSON(serializedNode: SerializedComposerMentionNode): ComposerMentionNode {
-    return $createComposerMentionNode(serializedNode.path);
+  static override importJSON(
+    serializedNode: SerializedComposerInlineTokenNode,
+  ): ComposerInlineTokenNode {
+    return $createComposerInlineTokenNode(
+      serializedNode.prefix,
+      serializedNode.value,
+      serializedNode.tokenKind,
+      serializedNode.tokenStatus,
+    );
   }
 
-  constructor(path: string, key?: NodeKey) {
-    const normalizedPath = path.startsWith("@") ? path.slice(1) : path;
-    super(`@${normalizedPath}`, key);
-    this.__path = normalizedPath;
+  constructor(
+    prefix: "@" | "$",
+    value: string,
+    tokenKind: ComposerInlineTokenKind,
+    tokenStatus: ComposerInlineTokenStatus,
+    key?: NodeKey,
+  ) {
+    const normalizedValue = value.replace(/^[@$]/, "");
+    super(`${prefix}${normalizedValue}`, key);
+    this.__prefix = prefix;
+    this.__value = normalizedValue;
+    this.__tokenKind = tokenKind;
+    this.__tokenStatus = tokenStatus;
   }
 
-  override exportJSON(): SerializedComposerMentionNode {
+  override exportJSON(): SerializedComposerInlineTokenNode {
     return {
       ...super.exportJSON(),
-      path: this.__path,
-      type: "composer-mention",
+      prefix: this.__prefix,
+      value: this.__value,
+      tokenKind: this.__tokenKind,
+      tokenStatus: this.__tokenStatus,
+      type: "composer-inline-token",
       version: 1,
     };
   }
@@ -133,20 +167,42 @@ class ComposerMentionNode extends TextNode {
     dom.className = COMPOSER_INLINE_CHIP_CLASS_NAME;
     dom.contentEditable = "false";
     dom.setAttribute("spellcheck", "false");
-    renderMentionChipDom(dom, this.__path);
+    renderInlineTokenChipDom(dom, {
+      prefix: this.__prefix,
+      value: this.__value,
+      tokenKind: this.__tokenKind,
+      tokenStatus: this.__tokenStatus,
+    });
     return dom;
   }
 
   override updateDOM(
-    prevNode: ComposerMentionNode,
+    prevNode: ComposerInlineTokenNode,
     dom: HTMLElement,
     _config: EditorConfig,
   ): boolean {
     dom.contentEditable = "false";
-    if (prevNode.__text !== this.__text || prevNode.__path !== this.__path) {
-      renderMentionChipDom(dom, this.__path);
+    if (
+      prevNode.__text !== this.__text ||
+      prevNode.__value !== this.__value ||
+      prevNode.__prefix !== this.__prefix ||
+      prevNode.__tokenKind !== this.__tokenKind ||
+      prevNode.__tokenStatus !== this.__tokenStatus
+    ) {
+      renderInlineTokenChipDom(dom, {
+        prefix: this.__prefix,
+        value: this.__value,
+        tokenKind: this.__tokenKind,
+        tokenStatus: this.__tokenStatus,
+      });
     }
     return false;
+  }
+
+  setResolution(tokenKind: ComposerInlineTokenKind, tokenStatus: ComposerInlineTokenStatus): void {
+    const writable = this.getWritable();
+    writable.__tokenKind = tokenKind;
+    writable.__tokenStatus = tokenStatus;
   }
 
   override canInsertTextBefore(): false {
@@ -166,8 +222,36 @@ class ComposerMentionNode extends TextNode {
   }
 }
 
-function $createComposerMentionNode(path: string): ComposerMentionNode {
-  return $applyNodeReplacement(new ComposerMentionNode(path));
+function resolveInlineTokenKind(
+  prefix: "@" | "$",
+  tokenKind?: ComposerInlineTokenKind,
+): ComposerInlineTokenKind {
+  if (tokenKind) {
+    return tokenKind;
+  }
+  return prefix === "$" ? "skill" : "path";
+}
+
+function resolveInlineTokenStatus(
+  tokenStatus?: ComposerInlineTokenStatus,
+): ComposerInlineTokenStatus {
+  return tokenStatus ?? "default";
+}
+
+function $createComposerInlineTokenNode(
+  prefix: "@" | "$",
+  value: string,
+  tokenKind?: ComposerInlineTokenKind,
+  tokenStatus?: ComposerInlineTokenStatus,
+): ComposerInlineTokenNode {
+  return $applyNodeReplacement(
+    new ComposerInlineTokenNode(
+      prefix,
+      value,
+      resolveInlineTokenKind(prefix, tokenKind),
+      resolveInlineTokenStatus(tokenStatus),
+    ),
+  );
 }
 
 function ComposerTerminalContextDecorator(props: { context: TerminalContextDraft }) {
@@ -234,11 +318,11 @@ function $createComposerTerminalContextNode(
   return $applyNodeReplacement(new ComposerTerminalContextNode(context));
 }
 
-type ComposerInlineTokenNode = ComposerMentionNode | ComposerTerminalContextNode;
+type ComposerEditorInlineTokenNode = ComposerInlineTokenNode | ComposerTerminalContextNode;
 
-function isComposerInlineTokenNode(candidate: unknown): candidate is ComposerInlineTokenNode {
+function isComposerInlineTokenNode(candidate: unknown): candidate is ComposerEditorInlineTokenNode {
   return (
-    candidate instanceof ComposerMentionNode || candidate instanceof ComposerTerminalContextNode
+    candidate instanceof ComposerInlineTokenNode || candidate instanceof ComposerTerminalContextNode
   );
 }
 
@@ -246,10 +330,43 @@ function resolvedThemeFromDocument(): "light" | "dark" {
   return document.documentElement.classList.contains("dark") ? "dark" : "light";
 }
 
-function renderMentionChipDom(container: HTMLElement, pathValue: string): void {
+function renderInlineTokenChipDom(
+  container: HTMLElement,
+  token: {
+    prefix: "@" | "$";
+    value: string;
+    tokenKind: ComposerInlineTokenKind;
+    tokenStatus: ComposerInlineTokenStatus;
+  },
+): void {
   container.textContent = "";
   container.style.setProperty("user-select", "none");
   container.style.setProperty("-webkit-user-select", "none");
+  if (token.tokenStatus === "missing") {
+    container.classList.add("border-amber-500/35", "bg-amber-500/10", "text-amber-800");
+    container.classList.remove("border-border/70", "bg-muted/70");
+  } else {
+    container.classList.remove("border-amber-500/35", "bg-amber-500/10", "text-amber-800");
+  }
+
+  if (token.tokenKind !== "path") {
+    const badge = document.createElement("span");
+    badge.className =
+      "rounded-sm bg-muted px-1 py-px font-mono text-[11px] uppercase tracking-wide text-muted-foreground";
+    badge.textContent =
+      token.tokenStatus === "missing"
+        ? "missing"
+        : token.tokenKind === "subagent"
+          ? "agent"
+          : "skill";
+
+    const label = document.createElement("span");
+    label.className = COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME;
+    label.textContent = `${token.prefix}${token.value}`;
+
+    container.append(badge, label);
+    return;
+  }
 
   const theme = resolvedThemeFromDocument();
   const icon = document.createElement("img");
@@ -257,11 +374,11 @@ function renderMentionChipDom(container: HTMLElement, pathValue: string): void {
   icon.ariaHidden = "true";
   icon.className = COMPOSER_INLINE_CHIP_ICON_CLASS_NAME;
   icon.loading = "lazy";
-  icon.src = getVscodeIconUrlForEntry(pathValue, inferEntryKindFromPath(pathValue), theme);
+  icon.src = getVscodeIconUrlForEntry(token.value, inferEntryKindFromPath(token.value), theme);
 
   const label = document.createElement("span");
   label.className = COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME;
-  label.textContent = basenameOfPath(pathValue);
+  label.textContent = basenameOfPath(token.value);
 
   container.append(icon, label);
 }
@@ -288,16 +405,16 @@ function clampExpandedCursor(value: string, cursor: number): number {
   return Math.max(0, Math.min(value.length, Math.floor(cursor)));
 }
 
-function getComposerInlineTokenTextLength(_node: ComposerInlineTokenNode): 1 {
+function getComposerInlineTokenTextLength(_node: ComposerEditorInlineTokenNode): 1 {
   return 1;
 }
 
-function getComposerInlineTokenExpandedTextLength(node: ComposerInlineTokenNode): number {
+function getComposerInlineTokenExpandedTextLength(node: ComposerEditorInlineTokenNode): number {
   return node.getTextContentSize();
 }
 
 function getAbsoluteOffsetForInlineTokenPoint(
-  node: ComposerInlineTokenNode,
+  node: ComposerEditorInlineTokenNode,
   absoluteOffset: number,
   pointOffset: number,
 ): number {
@@ -305,7 +422,7 @@ function getAbsoluteOffsetForInlineTokenPoint(
 }
 
 function getExpandedAbsoluteOffsetForInlineTokenPoint(
-  node: ComposerInlineTokenNode,
+  node: ComposerEditorInlineTokenNode,
   absoluteOffset: number,
   pointOffset: number,
 ): number {
@@ -313,7 +430,7 @@ function getExpandedAbsoluteOffsetForInlineTokenPoint(
 }
 
 function findSelectionPointForInlineToken(
-  node: ComposerInlineTokenNode,
+  node: ComposerEditorInlineTokenNode,
   remainingRef: { value: number },
 ): { key: string; offset: number; type: "element" } | null {
   const parent = node.getParent();
@@ -391,7 +508,7 @@ function getAbsoluteOffsetForPoint(node: LexicalNode, pointOffset: number): numb
   }
 
   if ($isTextNode(node)) {
-    if (node instanceof ComposerMentionNode) {
+    if (node instanceof ComposerInlineTokenNode) {
       return getAbsoluteOffsetForInlineTokenPoint(node, offset, pointOffset);
     }
     return offset + Math.min(pointOffset, node.getTextContentSize());
@@ -438,7 +555,7 @@ function getExpandedAbsoluteOffsetForPoint(node: LexicalNode, pointOffset: numbe
   }
 
   if ($isTextNode(node)) {
-    if (node instanceof ComposerMentionNode) {
+    if (node instanceof ComposerInlineTokenNode) {
       return getExpandedAbsoluteOffsetForInlineTokenPoint(node, offset, pointOffset);
     }
     return offset + Math.min(pointOffset, node.getTextContentSize());
@@ -469,7 +586,7 @@ function findSelectionPointAtOffset(
   node: LexicalNode,
   remainingRef: { value: number },
 ): { key: string; offset: number; type: "text" | "element" } | null {
-  if (node instanceof ComposerMentionNode) {
+  if (node instanceof ComposerInlineTokenNode) {
     return findSelectionPointForInlineToken(node, remainingRef);
   }
   if (node instanceof ComposerTerminalContextNode) {
@@ -591,6 +708,11 @@ function $appendTextWithLineBreaks(parent: ElementNode, text: string): void {
 function $setComposerEditorPrompt(
   prompt: string,
   terminalContexts: ReadonlyArray<TerminalContextDraft>,
+  resolveToken?: (
+    prefix: "@" | "$",
+    value: string,
+    existingKind?: ComposerInlineTokenKind,
+  ) => { kind?: ComposerInlineTokenKind; status?: ComposerInlineTokenStatus } | undefined,
 ): void {
   const root = $getRoot();
   root.clear();
@@ -599,8 +721,15 @@ function $setComposerEditorPrompt(
 
   const segments = splitPromptIntoComposerSegments(prompt, terminalContexts);
   for (const segment of segments) {
-    if (segment.type === "mention") {
-      paragraph.append($createComposerMentionNode(segment.path));
+    if (segment.type === "token") {
+      paragraph.append(
+        $createComposerInlineTokenNode(
+          segment.prefix,
+          segment.value,
+          resolveToken?.(segment.prefix, segment.value)?.kind,
+          resolveToken?.(segment.prefix, segment.value)?.status,
+        ),
+      );
       continue;
     }
     if (segment.type === "terminal-context") {
@@ -610,6 +739,29 @@ function $setComposerEditorPrompt(
       continue;
     }
     $appendTextWithLineBreaks(paragraph, segment.text);
+  }
+}
+
+function $refreshComposerInlineTokenResolution(
+  resolveToken?: (
+    prefix: "@" | "$",
+    value: string,
+    existingKind?: ComposerInlineTokenKind,
+  ) => { kind?: ComposerInlineTokenKind; status?: ComposerInlineTokenStatus } | undefined,
+): void {
+  const root = $getRoot();
+  const stack = [...root.getChildren()];
+  while (stack.length > 0) {
+    const node = stack.shift();
+    if (!node) continue;
+    if (node instanceof ComposerInlineTokenNode) {
+      const resolution = resolveToken?.(node.__prefix, node.__value, node.__tokenKind);
+      node.setResolution(resolution?.kind ?? node.__tokenKind, resolution?.status ?? "default");
+      continue;
+    }
+    if ($isElementNode(node)) {
+      stack.unshift(...node.getChildren());
+    }
   }
 }
 
@@ -639,6 +791,12 @@ interface ComposerPromptEditorProps {
   value: string;
   cursor: number;
   terminalContexts: ReadonlyArray<TerminalContextDraft>;
+  inlineTokenResolutionVersion?: string;
+  resolveInlineToken?: (
+    prefix: "@" | "$",
+    value: string,
+    existingKind?: ComposerInlineTokenKind,
+  ) => { kind?: ComposerInlineTokenKind; status?: ComposerInlineTokenStatus } | undefined;
   disabled: boolean;
   placeholder: string;
   className?: string;
@@ -882,6 +1040,8 @@ function ComposerPromptEditorInner({
   value,
   cursor,
   terminalContexts,
+  inlineTokenResolutionVersion,
+  resolveInlineToken,
   disabled,
   placeholder,
   className,
@@ -896,6 +1056,7 @@ function ComposerPromptEditorInner({
   const initialCursor = clampCollapsedComposerCursor(value, cursor);
   const terminalContextsSignature = terminalContextSignature(terminalContexts);
   const terminalContextsSignatureRef = useRef(terminalContextsSignature);
+  const tokenResolutionVersionRef = useRef(inlineTokenResolutionVersion ?? "");
   const snapshotRef = useRef({
     value,
     cursor: initialCursor,
@@ -920,10 +1081,13 @@ function ComposerPromptEditorInner({
     const normalizedCursor = clampCollapsedComposerCursor(value, cursor);
     const previousSnapshot = snapshotRef.current;
     const contextsChanged = terminalContextsSignatureRef.current !== terminalContextsSignature;
+    const resolutionChanged =
+      tokenResolutionVersionRef.current !== (inlineTokenResolutionVersion ?? "");
     if (
       previousSnapshot.value === value &&
       previousSnapshot.cursor === normalizedCursor &&
-      !contextsChanged
+      !contextsChanged &&
+      !resolutionChanged
     ) {
       return;
     }
@@ -935,6 +1099,7 @@ function ComposerPromptEditorInner({
       terminalContextIds: terminalContexts.map((context) => context.id),
     };
     terminalContextsSignatureRef.current = terminalContextsSignature;
+    tokenResolutionVersionRef.current = inlineTokenResolutionVersion ?? "";
 
     const rootElement = editor.getRootElement();
     const isFocused = Boolean(rootElement && document.activeElement === rootElement);
@@ -946,7 +1111,9 @@ function ComposerPromptEditorInner({
     editor.update(() => {
       const shouldRewriteEditorState = previousSnapshot.value !== value || contextsChanged;
       if (shouldRewriteEditorState) {
-        $setComposerEditorPrompt(value, terminalContexts);
+        $setComposerEditorPrompt(value, terminalContexts, resolveInlineToken);
+      } else if (resolutionChanged) {
+        $refreshComposerInlineTokenResolution(resolveInlineToken);
       }
       if (shouldRewriteEditorState || isFocused) {
         $setSelectionAtComposerOffset(normalizedCursor);
@@ -955,7 +1122,15 @@ function ComposerPromptEditorInner({
     queueMicrotask(() => {
       isApplyingControlledUpdateRef.current = false;
     });
-  }, [cursor, editor, terminalContexts, terminalContextsSignature, value]);
+  }, [
+    cursor,
+    editor,
+    inlineTokenResolutionVersion,
+    resolveInlineToken,
+    terminalContexts,
+    terminalContextsSignature,
+    value,
+  ]);
 
   const focusAt = useCallback(
     (nextCursor: number) => {
@@ -1130,6 +1305,8 @@ export const ComposerPromptEditor = forwardRef<
     value,
     cursor,
     terminalContexts,
+    inlineTokenResolutionVersion,
+    resolveInlineToken,
     disabled,
     placeholder,
     className,
@@ -1146,15 +1323,19 @@ export const ComposerPromptEditor = forwardRef<
     () => ({
       namespace: "t3tools-composer-editor",
       editable: true,
-      nodes: [ComposerMentionNode, ComposerTerminalContextNode],
+      nodes: [ComposerInlineTokenNode, ComposerTerminalContextNode],
       editorState: () => {
-        $setComposerEditorPrompt(initialValueRef.current, initialTerminalContextsRef.current);
+        $setComposerEditorPrompt(
+          initialValueRef.current,
+          initialTerminalContextsRef.current,
+          resolveInlineToken,
+        );
       },
       onError: (error) => {
         throw error;
       },
     }),
-    [],
+    [resolveInlineToken],
   );
 
   return (
@@ -1169,6 +1350,8 @@ export const ComposerPromptEditor = forwardRef<
         onChange={onChange}
         onPaste={onPaste}
         editorRef={ref}
+        {...(inlineTokenResolutionVersion ? { inlineTokenResolutionVersion } : {})}
+        {...(resolveInlineToken ? { resolveInlineToken } : {})}
         {...(onCommandKeyDown ? { onCommandKeyDown } : {})}
         {...(className ? { className } : {})}
       />

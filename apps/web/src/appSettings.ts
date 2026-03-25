@@ -50,14 +50,20 @@ const withDefaults =
       Schema.withDecodingDefault(() => fallback()),
     );
 
+export const ComposerMenuLayout = Schema.Literals(["separated", "unified"]);
+export type ComposerMenuLayout = typeof ComposerMenuLayout.Type;
+export const DEFAULT_COMPOSER_MENU_LAYOUT: ComposerMenuLayout = "separated";
+
 export const AppSettingsSchema = Schema.Struct({
   claudeBinaryPath: Schema.String.check(Schema.isMaxLength(4096)).pipe(withDefaults(() => "")),
   codexBinaryPath: Schema.String.check(Schema.isMaxLength(4096)).pipe(withDefaults(() => "")),
   codexHomePath: Schema.String.check(Schema.isMaxLength(4096)).pipe(withDefaults(() => "")),
   defaultThreadEnvMode: EnvMode.pipe(withDefaults(() => "local" as const satisfies EnvMode)),
   confirmThreadDelete: Schema.Boolean.pipe(withDefaults(() => true)),
+  diffWordWrap: Schema.Boolean.pipe(withDefaults(() => false)),
   enableAssistantStreaming: Schema.Boolean.pipe(withDefaults(() => false)),
   timestampFormat: TimestampFormat.pipe(withDefaults(() => DEFAULT_TIMESTAMP_FORMAT)),
+  composerMenuLayout: ComposerMenuLayout.pipe(withDefaults(() => DEFAULT_COMPOSER_MENU_LAYOUT)),
   customCodexModels: Schema.Array(Schema.String).pipe(withDefaults(() => [])),
   customClaudeModels: Schema.Array(Schema.String).pipe(withDefaults(() => [])),
   textGenerationModel: Schema.optional(TrimmedNonEmptyString),

@@ -81,6 +81,7 @@ beforeEach(() => {
 
 afterEach(() => {
   globalThis.WebSocket = originalWebSocket;
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -250,7 +251,41 @@ describe("WsTransport", () => {
 
     socket.close();
 
-    await expect(requestPromise).rejects.toThrow("WebSocket connection closed.");
+    await expect(requestPromise).rejects.toMatchObject({
+      message: "WebSocket connection closed.",
+      code: "connection_closed",
+    });
     transport.dispose();
+  });
+
+  it("rejects timed out requests with a structured transport error", async () => {
+    vi.useFakeTimers();
+
+    const transport = new WsTransport("ws://localhost:3020");
+    const requestPromise = transport.request("projects.list", undefined, { timeoutMs: 25 });
+    const rejection = expect(requestPromise).rejects.toMatchObject({
+      message: "Request timed out: projects.list",
+      code: "timeout",
+    });
+
+    await vi.advanceTimersByTimeAsync(25);
+
+    await rejection;
+    transport.dispose();
+  });
+
+  it("rejects pending requests when the transport is disposed", async () => {
+    const transport = new WsTransport("ws://localhost:3020");
+    const socket = getSocket();
+    socket.open();
+
+    const requestPromise = transport.request("projects.list");
+
+    transport.dispose();
+
+    await expect(requestPromise).rejects.toMatchObject({
+      message: "Transport disposed",
+      code: "transport_disposed",
+    });
   });
 });

@@ -2,9 +2,11 @@
 import "../index.css";
 
 import {
+  type InstalledSkillItem,
   ORCHESTRATION_WS_METHODS,
   type MessageId,
   type OrchestrationReadModel,
+  type ProjectEntry,
   type ProjectId,
   type ServerConfig,
   type ThreadId,
@@ -50,6 +52,11 @@ interface TestFixture {
   snapshot: OrchestrationReadModel;
   serverConfig: ServerConfig;
   welcome: WsWelcomePayload;
+  skillsInventory: {
+    items: InstalledSkillItem[];
+    warnings: string[];
+  };
+  workspaceEntries: ProjectEntry[];
 }
 
 let fixture: TestFixture;
@@ -103,6 +110,7 @@ function isoAt(offsetSeconds: number): string {
 function createBaseServerConfig(): ServerConfig {
   return {
     cwd: "/repo/project",
+    skillsEnabled: true,
     keybindingsConfigPath: "/repo/project/.t3code-keybindings.json",
     keybindings: [],
     issues: [],
@@ -271,6 +279,33 @@ function buildFixture(snapshot: OrchestrationReadModel): TestFixture {
       bootstrapProjectId: PROJECT_ID,
       bootstrapThreadId: THREAD_ID,
     },
+    skillsInventory: {
+      items: [],
+      warnings: [],
+    },
+    workspaceEntries: [],
+  };
+}
+
+function createUnlockedSnapshot(options: {
+  targetMessageId: MessageId;
+  targetText: string;
+}): OrchestrationReadModel {
+  const snapshot = createSnapshotForTargetUser(options);
+  const [firstThread, ...remainingThreads] = snapshot.threads;
+  if (!firstThread) {
+    return snapshot;
+  }
+  return {
+    ...snapshot,
+    threads: [
+      {
+        ...firstThread,
+        messages: [],
+        session: null,
+      },
+      ...remainingThreads,
+    ],
   };
 }
 
@@ -433,9 +468,12 @@ function resolveWsRpc(body: WsRequestEnvelope["body"]): unknown {
   }
   if (tag === WS_METHODS.projectsSearchEntries) {
     return {
-      entries: [],
+      entries: fixture.workspaceEntries,
       truncated: false,
     };
+  }
+  if (tag === WS_METHODS.skillsList || tag === WS_METHODS.skillsRefresh) {
+    return fixture.skillsInventory;
   }
   if (tag === WS_METHODS.terminalOpen) {
     return {
@@ -567,6 +605,12 @@ async function waitForComposerEditor(): Promise<HTMLElement> {
     () => document.querySelector<HTMLElement>('[contenteditable="true"]'),
     "Unable to find composer editor.",
   );
+}
+
+async function typeInComposer(text: string): Promise<void> {
+  await waitForComposerEditor();
+  await page.getByTestId("composer-editor").fill(text);
+  await waitForLayout();
 }
 
 async function waitForSendButton(): Promise<HTMLButtonElement> {
@@ -1042,6 +1086,295 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
     } finally {
       await mounted.cleanup();
+    }
+  });
+
+  it("shows Codex skills for $ queries and workspace paths for @ queries", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-skill-menu-test" as MessageId,
+        targetText: "skill menu test",
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.skillsInventory = {
+          items: [
+            {
+              provider: "codex",
+              kind: "skill",
+              scope: "global",
+              slug: "copywriter",
+              displayName: "Copywriter",
+              description: "Sharpens product messaging.",
+              installPath: "/Users/test/.codex/skills/copywriter",
+            },
+          ],
+          warnings: [],
+        };
+        nextFixture.workspaceEntries = [
+          {
+            path: "src/provider-aware-skill-test.tsx",
+            kind: "file",
+            parentPath: "src",
+          },
+        ];
+      },
+    });
+
+    try {
+      await typeInComposer("$copy");
+      await expect.element(page.getByText("Copywriter")).toBeInTheDocument();
+      await expect.element(page.getByText("Sharpens product messaging.")).toBeInTheDocument();
+
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "");
+      await waitForLayout();
+
+      await typeInComposer("@provider-aware");
+      await expect.element(page.getByText("provider-aware-skill-test.tsx")).toBeInTheDocument();
+      await expect.element(page.getByText("src")).toBeInTheDocument();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("shows Claude subagents ahead of path matches for @ queries", async () => {
+    useComposerDraftStore.setState({
+      draftsByThreadId: {
+        [THREAD_ID]: {
+          prompt: "",
+          images: [],
+          nonPersistedImageIds: [],
+          persistedAttachments: [],
+          terminalContexts: [],
+          provider: "claudeAgent",
+          model: "claude-sonnet-4-6",
+          modelOptions: null,
+          runtimeMode: null,
+          interactionMode: null,
+        },
+      },
+      draftThreadsByThreadId: {},
+      projectDraftThreadIdByProjectId: {},
+      stickyModel: null,
+      stickyModelOptions: {},
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createUnlockedSnapshot({
+        targetMessageId: "msg-user-subagent-menu-test" as MessageId,
+        targetText: "subagent menu test",
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.skillsInventory = {
+          items: [
+            {
+              provider: "claudeAgent",
+              kind: "subagent",
+              scope: "project",
+              slug: "planner",
+              displayName: "Planner",
+              description: "Breaks down multi-step work.",
+              installPath: "/repo/project/.claude/agents/planner",
+            },
+          ],
+          warnings: [],
+        };
+        nextFixture.workspaceEntries = [
+          {
+            path: "docs/planner-notes.md",
+            kind: "file",
+            parentPath: "docs",
+          },
+        ];
+      },
+    });
+
+    try {
+      await typeInComposer("@plan");
+      await expect.element(page.getByText("Planner")).toBeInTheDocument();
+      await expect.element(page.getByText("planner-notes.md")).toBeInTheDocument();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("shows Claude skills for $ queries", async () => {
+    useComposerDraftStore.setState({
+      draftsByThreadId: {
+        [THREAD_ID]: {
+          prompt: "",
+          images: [],
+          nonPersistedImageIds: [],
+          persistedAttachments: [],
+          terminalContexts: [],
+          provider: "claudeAgent",
+          model: "claude-sonnet-4-6",
+          modelOptions: null,
+          runtimeMode: null,
+          interactionMode: null,
+        },
+      },
+      draftThreadsByThreadId: {},
+      projectDraftThreadIdByProjectId: {},
+      stickyModel: null,
+      stickyModelOptions: {},
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createUnlockedSnapshot({
+        targetMessageId: "msg-user-claude-skill-menu-test" as MessageId,
+        targetText: "claude skill menu test",
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.skillsInventory = {
+          items: [
+            {
+              provider: "claudeAgent",
+              kind: "skill",
+              scope: "global",
+              slug: "frontend-design",
+              displayName: "Frontend Design",
+              description: "Builds polished UI systems.",
+              installPath: "/Users/test/.claude/skills/frontend-design",
+            },
+          ],
+          warnings: [],
+        };
+      },
+    });
+
+    try {
+      await typeInComposer("$front");
+      await expect.element(page.getByText("Frontend Design")).toBeInTheDocument();
+      await expect.element(page.getByText("Builds polished UI systems.")).toBeInTheDocument();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("degrades unresolved skill chips after the active provider changes", async () => {
+    const snapshot = createUnlockedSnapshot({
+      targetMessageId: "msg-user-skill-resolution-test" as MessageId,
+      targetText: "skill resolution test",
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot,
+      configureFixture: (nextFixture) => {
+        nextFixture.skillsInventory = {
+          items: [
+            {
+              provider: "codex",
+              kind: "skill",
+              scope: "global",
+              slug: "copywriter",
+              displayName: "Copywriter",
+              description: "Sharpens product messaging.",
+              installPath: "/Users/test/.codex/skills/copywriter",
+            },
+          ],
+          warnings: [],
+        };
+      },
+    });
+
+    try {
+      await typeInComposer("$copy");
+      await page.getByText("Copywriter", { exact: true }).click();
+      await waitForLayout();
+
+      useComposerDraftStore.setState({
+        draftsByThreadId: {
+          [THREAD_ID]: {
+            ...useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]!,
+            provider: "claudeAgent",
+            model: "claude-sonnet-4-6",
+          },
+        },
+      });
+      await waitForLayout();
+
+      await vi.waitFor(() => {
+        const text = document.body.textContent ?? "";
+        expect(text).toContain("missing");
+        expect(text).toContain(
+          "Some skill or subagent tokens no longer resolve for the active provider.",
+        );
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("shows provider-aware empty state copy for skill queries", async () => {
+    const codexSnapshot = createUnlockedSnapshot({
+      targetMessageId: "msg-user-skill-empty-state-test" as MessageId,
+      targetText: "skill empty state test",
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: codexSnapshot,
+      configureFixture: (nextFixture) => {
+        nextFixture.skillsInventory = {
+          items: [],
+          warnings: [],
+        };
+      },
+    });
+
+    try {
+      await typeInComposer("$missing");
+      await expect.element(page.getByText("No matching Codex skills.")).toBeInTheDocument();
+      await expect.element(page.getByText("Browse skills.sh")).toBeInTheDocument();
+    } finally {
+      await mounted.cleanup();
+    }
+
+    useComposerDraftStore.setState({
+      draftsByThreadId: {
+        [THREAD_ID]: {
+          prompt: "",
+          images: [],
+          nonPersistedImageIds: [],
+          persistedAttachments: [],
+          terminalContexts: [],
+          provider: "claudeAgent",
+          model: "claude-sonnet-4-6",
+          modelOptions: null,
+          runtimeMode: null,
+          interactionMode: null,
+        },
+      },
+      draftThreadsByThreadId: {},
+      projectDraftThreadIdByProjectId: {},
+      stickyModel: null,
+      stickyModelOptions: {},
+    });
+
+    const claudeMounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createUnlockedSnapshot({
+        targetMessageId: "msg-user-claude-skill-empty-state-test" as MessageId,
+        targetText: "claude skill empty state test",
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.skillsInventory = {
+          items: [],
+          warnings: [],
+        };
+      },
+    });
+
+    try {
+      await typeInComposer("$missing");
+      await expect.element(page.getByText("No matching Claude skills.")).toBeInTheDocument();
+      await expect.element(page.getByText("Browse skills.sh")).toBeInTheDocument();
+    } finally {
+      await claudeMounted.cleanup();
     }
   });
 

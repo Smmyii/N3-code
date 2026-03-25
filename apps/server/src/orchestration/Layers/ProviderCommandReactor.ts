@@ -758,8 +758,18 @@ const make = Effect.gen(function* () {
   ).pipe(Effect.asVoid);
 
   return {
-    start,
-    drain: worker.drain,
+    start: start.pipe(
+      Effect.provideService(OrchestrationEngineService, orchestrationEngine),
+      Effect.provideService(ProviderService, providerService),
+      Effect.provideService(GitCore, git),
+      Effect.provideService(TextGeneration, textGeneration),
+    ),
+    drain: worker.drain.pipe(
+      Effect.provideService(OrchestrationEngineService, orchestrationEngine),
+      Effect.provideService(ProviderService, providerService),
+      Effect.provideService(GitCore, git),
+      Effect.provideService(TextGeneration, textGeneration),
+    ),
   } satisfies ProviderCommandReactorShape;
 });
 

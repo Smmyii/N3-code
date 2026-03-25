@@ -53,6 +53,7 @@ import { GitCore } from "./git/Services/GitCore.ts";
 import { GitCommandError, GitManagerError } from "./git/Errors.ts";
 import { MigrationError } from "@effect/sql-sqlite-bun/SqliteMigrator";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
+import { SkillRegistry, type SkillRegistryShape } from "./skills/Services/SkillRegistry.ts";
 
 const asEventId = (value: string): EventId => EventId.makeUnsafe(value);
 const asProviderItemId = (value: string): ProviderItemId => ProviderItemId.makeUnsafe(value);
@@ -76,6 +77,49 @@ const defaultProviderStatuses: ReadonlyArray<ServerProviderStatus> = [
 
 const defaultProviderHealthService: ProviderHealthShape = {
   getStatuses: Effect.succeed(defaultProviderStatuses),
+};
+
+const defaultSkillRegistryService: SkillRegistryShape = {
+  list: () => Effect.succeed({ items: [], warnings: [] }),
+  previewAdopt: () =>
+    Effect.fail(new Error("previewAdopt not configured")) as unknown as ReturnType<
+      SkillRegistryShape["previewAdopt"]
+    >,
+  adopt: () =>
+    Effect.fail(new Error("adopt not configured")) as unknown as ReturnType<
+      SkillRegistryShape["adopt"]
+    >,
+  previewInstall: () =>
+    Effect.fail(new Error("previewInstall not configured")) as unknown as ReturnType<
+      SkillRegistryShape["previewInstall"]
+    >,
+  install: () =>
+    Effect.fail(new Error("install not configured")) as unknown as ReturnType<
+      SkillRegistryShape["install"]
+    >,
+  remove: () => Effect.succeed({ removed: true }),
+  refresh: () => Effect.succeed({ items: [], warnings: [] }),
+  checkUpdates: () => Effect.succeed({ items: [], warnings: [] }),
+  upgrade: () =>
+    Effect.fail(new Error("upgrade not configured")) as unknown as ReturnType<
+      SkillRegistryShape["upgrade"]
+    >,
+  reinstall: () =>
+    Effect.fail(new Error("reinstall not configured")) as unknown as ReturnType<
+      SkillRegistryShape["reinstall"]
+    >,
+  setEnabled: () =>
+    Effect.fail(new Error("setEnabled not configured")) as unknown as ReturnType<
+      SkillRegistryShape["setEnabled"]
+    >,
+  repairManagedLinks: () =>
+    Effect.fail(new Error("repairManagedLinks not configured")) as unknown as ReturnType<
+      SkillRegistryShape["repairManagedLinks"]
+    >,
+  stopManaging: () =>
+    Effect.fail(new Error("stopManaging not configured")) as unknown as ReturnType<
+      SkillRegistryShape["stopManaging"]
+    >,
 };
 
 class MockTerminalManager implements TerminalManagerShape {
@@ -514,6 +558,7 @@ describe("WebSocket Server", () => {
       port: 0,
       host: undefined,
       cwd: options.cwd ?? "/test/project",
+      skillsEnabled: true,
       baseDir,
       ...derivedPaths,
       staticDir: options.staticDir,
@@ -544,6 +589,7 @@ describe("WebSocket Server", () => {
     const dependenciesLayer = Layer.empty.pipe(
       Layer.provideMerge(runtimeLayer),
       Layer.provideMerge(providerHealthLayer),
+      Layer.provideMerge(Layer.succeed(SkillRegistry, defaultSkillRegistryService)),
       Layer.provideMerge(openLayer),
       Layer.provideMerge(serverConfigLayer),
       Layer.provideMerge(AnalyticsService.layerTest),
@@ -841,6 +887,7 @@ describe("WebSocket Server", () => {
     expect(response.error).toBeUndefined();
     expect(response.result).toEqual({
       cwd: "/my/workspace",
+      skillsEnabled: true,
       keybindingsConfigPath: keybindingsPath,
       keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
       issues: [],
@@ -866,6 +913,7 @@ describe("WebSocket Server", () => {
     expect(response.error).toBeUndefined();
     expect(response.result).toEqual({
       cwd: "/my/workspace",
+      skillsEnabled: true,
       keybindingsConfigPath: keybindingsPath,
       keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
       issues: [],
@@ -897,6 +945,7 @@ describe("WebSocket Server", () => {
     expect(response.error).toBeUndefined();
     expect(response.result).toEqual({
       cwd: "/my/workspace",
+      skillsEnabled: true,
       keybindingsConfigPath: keybindingsPath,
       keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
       issues: [
@@ -937,6 +986,7 @@ describe("WebSocket Server", () => {
     expect(response.error).toBeUndefined();
     const result = response.result as {
       cwd: string;
+      skillsEnabled: boolean;
       keybindingsConfigPath: string;
       keybindings: ResolvedKeybindingsConfig;
       issues: Array<{ kind: string; index?: number; message: string }>;
@@ -944,6 +994,7 @@ describe("WebSocket Server", () => {
       availableEditors: unknown;
     };
     expect(result.cwd).toBe("/my/workspace");
+    expect(result.skillsEnabled).toBe(true);
     expect(result.keybindingsConfigPath).toBe(keybindingsPath);
     expect(result.issues).toEqual([
       {
@@ -1052,6 +1103,7 @@ describe("WebSocket Server", () => {
     ) as KeybindingsConfig;
     expect(response.result).toEqual({
       cwd: "/my/workspace",
+      skillsEnabled: true,
       keybindingsConfigPath: keybindingsPath,
       keybindings: compileKeybindings(persistedConfig),
       issues: [],
@@ -1100,6 +1152,7 @@ describe("WebSocket Server", () => {
     expect(configResponse.error).toBeUndefined();
     expect(configResponse.result).toEqual({
       cwd: "/my/workspace",
+      skillsEnabled: true,
       keybindingsConfigPath: keybindingsPath,
       keybindings: compileKeybindings(persistedConfig),
       issues: [],

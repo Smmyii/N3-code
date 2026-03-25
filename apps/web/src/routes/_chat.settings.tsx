@@ -23,9 +23,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../components/ui/select";
-import { SidebarTrigger } from "../components/ui/sidebar";
+import { SidebarInset, SidebarTrigger } from "../components/ui/sidebar";
 import { Switch } from "../components/ui/switch";
-import { SidebarInset } from "../components/ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { isElectron } from "../env";
@@ -33,6 +32,7 @@ import { useTheme } from "../hooks/useTheme";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { cn } from "../lib/utils";
 import { ensureNativeApi, readNativeApi } from "../nativeApi";
+import { SettingsSkillsSection } from "../components/SettingsSkillsSection";
 
 const THEME_OPTIONS = [
   {
@@ -207,12 +207,13 @@ function SettingsRouteView() {
     Partial<Record<ProviderKind, string | null>>
   >({});
   const [showAllCustomModels, setShowAllCustomModels] = useState(false);
-
   const codexBinaryPath = settings.codexBinaryPath;
   const codexHomePath = settings.codexHomePath;
   const claudeBinaryPath = settings.claudeBinaryPath;
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
   const availableEditors = serverConfigQuery.data?.availableEditors;
+  const workspaceRoot = serverConfigQuery.data?.cwd ?? null;
+  const skillsEnabled = serverConfigQuery.data?.skillsEnabled ?? false;
 
   const gitTextGenerationModelOptions = getAppModelOptions(
     "codex",
@@ -252,6 +253,7 @@ function SettingsRouteView() {
   const changedSettingLabels = [
     ...(theme !== "system" ? ["Theme"] : []),
     ...(settings.timestampFormat !== defaults.timestampFormat ? ["Time format"] : []),
+    ...(settings.diffWordWrap !== defaults.diffWordWrap ? ["Diff line wrapping"] : []),
     ...(settings.enableAssistantStreaming !== defaults.enableAssistantStreaming
       ? ["Assistant output"]
       : []),
@@ -501,6 +503,34 @@ function SettingsRouteView() {
               />
 
               <SettingsRow
+                title="Diff line wrapping"
+                description="Set the default wrap state when the diff panel opens. The in-panel wrap toggle only affects the current diff session."
+                resetAction={
+                  settings.diffWordWrap !== defaults.diffWordWrap ? (
+                    <SettingResetButton
+                      label="diff line wrapping"
+                      onClick={() =>
+                        updateSettings({
+                          diffWordWrap: defaults.diffWordWrap,
+                        })
+                      }
+                    />
+                  ) : null
+                }
+                control={
+                  <Switch
+                    checked={settings.diffWordWrap}
+                    onCheckedChange={(checked) =>
+                      updateSettings({
+                        diffWordWrap: Boolean(checked),
+                      })
+                    }
+                    aria-label="Wrap diff lines by default"
+                  />
+                }
+              />
+
+              <SettingsRow
                 title="Assistant output"
                 description="Show token-by-token output while a response is in progress."
                 resetAction={
@@ -598,6 +628,13 @@ function SettingsRouteView() {
                 }
               />
             </SettingsSection>
+
+            <SettingsSkillsSection
+              skillsEnabled={skillsEnabled}
+              workspaceRoot={workspaceRoot}
+              codexHomePath={codexHomePath}
+              availableEditors={availableEditors}
+            />
 
             <SettingsSection title="Models">
               <SettingsRow

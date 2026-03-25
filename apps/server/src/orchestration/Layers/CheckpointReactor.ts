@@ -792,8 +792,18 @@ const make = Effect.gen(function* () {
   });
 
   return {
-    start,
-    drain: worker.drain,
+    start: start.pipe(
+      Effect.provideService(OrchestrationEngineService, orchestrationEngine),
+      Effect.provideService(ProviderService, providerService),
+      Effect.provideService(CheckpointStore, checkpointStore),
+      Effect.provideService(RuntimeReceiptBus, receiptBus),
+    ),
+    drain: worker.drain.pipe(
+      Effect.provideService(OrchestrationEngineService, orchestrationEngine),
+      Effect.provideService(ProviderService, providerService),
+      Effect.provideService(CheckpointStore, checkpointStore),
+      Effect.provideService(RuntimeReceiptBus, receiptBus),
+    ),
   } satisfies CheckpointReactorShape;
 });
 

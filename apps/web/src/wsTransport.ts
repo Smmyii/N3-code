@@ -13,7 +13,7 @@ type PushListener<C extends WsPushChannel> = (message: WsPushMessage<C>) => void
 
 interface PendingRequest {
   resolve: (result: unknown) => void;
-  reject: (error: Error) => void;
+  reject: (error: WsRequestError) => void;
   timeout: ReturnType<typeof setTimeout> | null;
 }
 
@@ -48,6 +48,29 @@ function asError(value: unknown, fallback: string): Error {
     return value;
   }
   return new Error(fallback);
+}
+
+export class WsRequestError extends Error {
+  code?: string;
+  details?: unknown;
+
+  constructor(message: string, options?: { code?: string; details?: unknown }) {
+    super(message);
+    this.name = "WsRequestError";
+    if (options?.code !== undefined) {
+      this.code = options.code;
+    }
+    if (options?.details !== undefined) {
+      this.details = options.details;
+    }
+  }
+}
+
+function createTransportRequestError(
+  code: "timeout" | "transport_disposed" | "connection_closed",
+  message: string,
+): WsRequestError {
+  return new WsRequestError(message, { code });
 }
 
 export class WsTransport {
@@ -97,12 +120,12 @@ export class WsTransport {
           ? null
           : setTimeout(() => {
               this.pending.delete(id);
-              reject(new Error(`Request timed out: ${method}`));
+              reject(createTransportRequestError("timeout", `Request timed out: ${method}`));
             }, timeoutMs);
 
       this.pending.set(id, {
         resolve: resolve as (result: unknown) => void,
-        reject,
+        reject: reject as (error: WsRequestError) => void,
         timeout,
       });
 
@@ -161,7 +184,7 @@ export class WsTransport {
       if (pending.timeout !== null) {
         clearTimeout(pending.timeout);
       }
-      pending.reject(new Error("Transport disposed"));
+      pending.reject(createTransportRequestError("transport_disposed", "Transport disposed"));
     }
     this.pending.clear();
     this.outboundQueue.length = 0;
@@ -197,7 +220,9 @@ export class WsTransport {
             clearTimeout(pending.timeout);
           }
           this.pending.delete(id);
-          pending.reject(new Error("WebSocket connection closed."));
+          pending.reject(
+            createTransportRequestError("connection_closed", "WebSocket connection closed."),
+          );
         }
       }
       if (this.disposed) {
@@ -252,7 +277,12 @@ export class WsTransport {
     this.pending.delete(message.id);
 
     if (message.error) {
-      pending.reject(new Error(message.error.message));
+      pending.reject(
+        new WsRequestError(message.error.message, {
+          ...(message.error.code ? { code: message.error.code } : {}),
+          ...(message.error.details !== undefined ? { details: message.error.details } : {}),
+        }),
+      );
       return;
     }
 
