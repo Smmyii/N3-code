@@ -2,20 +2,11 @@ import type { ThreadId } from "@t3tools/contracts";
 
 import type { Thread } from "../types";
 
-export type SidebarColor =
-  | "slate"
-  | "blue"
-  | "teal"
-  | "emerald"
-  | "amber"
-  | "rose"
-  | "violet";
+export type SidebarColor = "slate" | "blue" | "teal" | "emerald" | "amber" | "rose" | "violet";
 
 export type SidebarThreadColorMode = "inherit" | "custom" | "none";
 
-export type SidebarNodeRef =
-  | { kind: "folder"; id: string }
-  | { kind: "thread"; id: ThreadId };
+export type SidebarNodeRef = { kind: "folder"; id: string } | { kind: "thread"; id: ThreadId };
 
 export interface SidebarFolder {
   id: string;
@@ -68,6 +59,29 @@ export type SidebarDropTarget =
   | { type: "folder-before"; folderId: string; before: SidebarNodeRef | null }
   | { type: "inside-folder"; folderId: string };
 
+export const SIDEBAR_COLOR_OPTIONS: ReadonlyArray<{ id: SidebarColor; label: string }> = [
+  { id: "slate", label: "Slate" },
+  { id: "blue", label: "Blue" },
+  { id: "teal", label: "Teal" },
+  { id: "emerald", label: "Emerald" },
+  { id: "amber", label: "Amber" },
+  { id: "rose", label: "Rose" },
+  { id: "violet", label: "Violet" },
+] as const;
+
+export const SIDEBAR_COLOR_VALUES: Record<
+  SidebarColor,
+  { folderAccent: string; threadAccent: string }
+> = {
+  slate: { folderAccent: "#64748b", threadAccent: "#94a3b8" },
+  blue: { folderAccent: "#2563eb", threadAccent: "#60a5fa" },
+  teal: { folderAccent: "#0f766e", threadAccent: "#2dd4bf" },
+  emerald: { folderAccent: "#059669", threadAccent: "#34d399" },
+  amber: { folderAccent: "#d97706", threadAccent: "#fbbf24" },
+  rose: { folderAccent: "#e11d48", threadAccent: "#fb7185" },
+  violet: { folderAccent: "#7c3aed", threadAccent: "#a78bfa" },
+};
+
 export function createEmptySidebarProjectOrganization(): SidebarProjectOrganization {
   return {
     rootOrder: [],
@@ -112,7 +126,9 @@ export function normalizeSidebarProjectOrganization(input: {
     foldersById[folderId] = {
       ...folder,
       childOrder: folder.childOrder.filter((node) =>
-        node.kind === "folder" ? input.organization.foldersById[node.id] !== undefined : liveThreadIds.has(node.id),
+        node.kind === "folder"
+          ? input.organization.foldersById[node.id] !== undefined
+          : liveThreadIds.has(node.id),
       ),
     };
   }
@@ -123,7 +139,9 @@ export function normalizeSidebarProjectOrganization(input: {
     ),
     foldersById,
     threadMetaById: {} as Record<ThreadId, SidebarThreadMeta>,
-    expandedFolderIds: input.organization.expandedFolderIds.filter((folderId) => foldersById[folderId] !== undefined),
+    expandedFolderIds: input.organization.expandedFolderIds.filter(
+      (folderId) => foldersById[folderId] !== undefined,
+    ),
   };
 
   for (const [threadId, meta] of Object.entries(input.organization.threadMetaById)) {
@@ -195,7 +213,7 @@ export function deleteFolderAndPromoteChildren(
   const parentOrder =
     parentFolderId === null
       ? organization.rootOrder
-      : organization.foldersById[parentFolderId]?.childOrder ?? [];
+      : (organization.foldersById[parentFolderId]?.childOrder ?? []);
   const folderIndex = parentOrder.findIndex(
     (node) => node.kind === "folder" && node.id === folderId,
   );
@@ -303,7 +321,12 @@ export function deriveSidebarNodes(input: {
         depth,
         color: folder.color,
         parentFolderId,
-        children: visit(folder.childOrder, depth + 1, folder.id, folder.color ?? inheritedFolderColor),
+        children: visit(
+          folder.childOrder,
+          depth + 1,
+          folder.id,
+          folder.color ?? inheritedFolderColor,
+        ),
       });
     }
 
@@ -330,8 +353,10 @@ export function moveSidebarNode(
 
   if (
     input.node.kind === "folder" &&
-    ((input.target.type === "inside-folder" && isFolderDescendant(next.foldersById, input.target.folderId, input.node.id)) ||
-      (input.target.type === "folder-before" && isFolderDescendant(next.foldersById, input.target.folderId, input.node.id)))
+    ((input.target.type === "inside-folder" &&
+      isFolderDescendant(next.foldersById, input.target.folderId, input.node.id)) ||
+      (input.target.type === "folder-before" &&
+        isFolderDescendant(next.foldersById, input.target.folderId, input.node.id)))
   ) {
     return organization;
   }
@@ -368,10 +393,110 @@ export function moveSidebarNode(
   }
 
   if (input.target.type === "folder-before") {
-    targetFolder.childOrder = insertNodeBefore(targetFolder.childOrder, input.target.before, input.node);
+    targetFolder.childOrder = insertNodeBefore(
+      targetFolder.childOrder,
+      input.target.before,
+      input.node,
+    );
     return next;
   }
 
   targetFolder.childOrder = [...targetFolder.childOrder, input.node];
   return next;
+}
+
+export function sidebarNodeRefToDragId(node: SidebarNodeRef): string {
+  return `${node.kind}:${node.id}`;
+}
+
+export function sidebarDropTargetToId(target: SidebarDropTarget): string {
+  if (target.type === "root-start") {
+    return "root-start";
+  }
+  if (target.type === "inside-folder") {
+    return `inside-folder:${target.folderId}`;
+  }
+  if (target.type === "root-before") {
+    return target.before === null
+      ? "root-start"
+      : `root-before:${target.before.kind}:${target.before.id}`;
+  }
+  return target.before === null
+    ? `inside-folder:${target.folderId}`
+    : `folder-before:${target.folderId}:${target.before.kind}:${target.before.id}`;
+}
+
+export function parseSidebarNodeRef(id: string | number | null | undefined): SidebarNodeRef | null {
+  if (typeof id !== "string") {
+    return null;
+  }
+
+  const match = /^(folder|thread):(.+)$/.exec(id);
+  if (!match) {
+    return null;
+  }
+  const [, kind, rawId] = match;
+  if (!rawId) {
+    return null;
+  }
+
+  if (kind === "folder") {
+    return { kind: "folder", id: rawId };
+  }
+
+  return { kind: "thread", id: rawId as ThreadId };
+}
+
+export function parseSidebarDropTarget(
+  id: string | number | null | undefined,
+): SidebarDropTarget | null {
+  if (typeof id !== "string") {
+    return null;
+  }
+
+  if (id === "root-start") {
+    return { type: "root-start" };
+  }
+
+  const insideFolderMatch = /^inside-folder:(.+)$/.exec(id);
+  if (insideFolderMatch) {
+    const [, folderId] = insideFolderMatch;
+    if (!folderId) {
+      return null;
+    }
+    return { type: "inside-folder", folderId };
+  }
+
+  const rootBeforeMatch = /^root-before:(folder|thread):(.+)$/.exec(id);
+  if (rootBeforeMatch) {
+    const [, beforeKind, beforeId] = rootBeforeMatch;
+    if (!beforeKind || !beforeId) {
+      return null;
+    }
+    return {
+      type: "root-before",
+      before:
+        beforeKind === "folder"
+          ? { kind: "folder", id: beforeId }
+          : { kind: "thread", id: beforeId as ThreadId },
+    };
+  }
+
+  const folderBeforeMatch = /^folder-before:(.+):(folder|thread):(.+)$/.exec(id);
+  if (folderBeforeMatch) {
+    const [, folderId, beforeKind, beforeId] = folderBeforeMatch;
+    if (!folderId || !beforeKind || !beforeId) {
+      return null;
+    }
+    return {
+      type: "folder-before",
+      folderId,
+      before:
+        beforeKind === "folder"
+          ? { kind: "folder", id: beforeId }
+          : { kind: "thread", id: beforeId as ThreadId },
+    };
+  }
+
+  return null;
 }

@@ -3,12 +3,10 @@ import {
   ArrowUpDownIcon,
   ChevronRightIcon,
   FolderIcon,
-  GitPullRequestIcon,
   PlusIcon,
   RocketIcon,
   SettingsIcon,
   SquarePenIcon,
-  TerminalIcon,
   TriangleAlertIcon,
 } from "lucide-react";
 import { autoAnimate } from "@formkit/auto-animate";
@@ -33,10 +31,9 @@ import {
   type DesktopUpdateState,
   ProjectId,
   ThreadId,
-  type GitStatusResult,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
-import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
 import {
   type SidebarProjectSortOrder,
@@ -48,12 +45,12 @@ import { isLinuxPlatform, isMacPlatform, newCommandId, newProjectId } from "../l
 import { useStore } from "../store";
 import { shortcutLabelForCommand } from "../keybindings";
 import { derivePendingApprovals, derivePendingUserInputs } from "../session-logic";
-import { gitRemoveWorktreeMutationOptions, gitStatusQueryOptions } from "../lib/gitReactQuery";
+import { gitRemoveWorktreeMutationOptions } from "../lib/gitReactQuery";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { readNativeApi } from "../nativeApi";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
-import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
+import { useTerminalStateStore } from "../terminalStateStore";
 import { toastManager } from "./ui/toast";
 import {
   getArm64IntelBuildWarningDescription,
@@ -80,9 +77,6 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarMenuSub,
-  SidebarMenuSubButton,
-  SidebarMenuSubItem,
   SidebarSeparator,
   SidebarTrigger,
 } from "./ui/sidebar";
@@ -104,6 +98,10 @@ import { useSettings, useUpdateSettings } from "~/hooks/useSettings";
 import {
   createEmptySidebarProjectOrganization,
   deriveSidebarNodes,
+  parseSidebarDropTarget,
+  parseSidebarNodeRef,
+  SIDEBAR_COLOR_OPTIONS,
+  type SidebarColor,
 } from "./Sidebar.organization";
 import { SidebarOrganizationTree } from "./SidebarOrganizationTree";
 import { useSidebarOrganizationStore } from "../sidebarOrganizationStore";
@@ -124,74 +122,6 @@ const SIDEBAR_LIST_ANIMATION_OPTIONS = {
   easing: "ease-out",
 } as const;
 const loadedProjectFaviconSrcs = new Set<string>();
-
-function formatRelativeTime(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  const minutes = Math.floor(diff / 60_000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
-}
-
-interface TerminalStatusIndicator {
-  label: "Terminal process running";
-  colorClass: string;
-  pulse: boolean;
-}
-
-interface PrStatusIndicator {
-  label: "PR open" | "PR closed" | "PR merged";
-  colorClass: string;
-  tooltip: string;
-  url: string;
-}
-
-type ThreadPr = GitStatusResult["pr"];
-
-function terminalStatusFromRunningIds(
-  runningTerminalIds: string[],
-): TerminalStatusIndicator | null {
-  if (runningTerminalIds.length === 0) {
-    return null;
-  }
-  return {
-    label: "Terminal process running",
-    colorClass: "text-teal-600 dark:text-teal-300/90",
-    pulse: true,
-  };
-}
-
-function prStatusIndicator(pr: ThreadPr): PrStatusIndicator | null {
-  if (!pr) return null;
-
-  if (pr.state === "open") {
-    return {
-      label: "PR open",
-      colorClass: "text-emerald-600 dark:text-emerald-300/90",
-      tooltip: `#${pr.number} PR open: ${pr.title}`,
-      url: pr.url,
-    };
-  }
-  if (pr.state === "closed") {
-    return {
-      label: "PR closed",
-      colorClass: "text-zinc-500 dark:text-zinc-400/80",
-      tooltip: `#${pr.number} PR closed: ${pr.title}`,
-      url: pr.url,
-    };
-  }
-  if (pr.state === "merged") {
-    return {
-      label: "PR merged",
-      colorClass: "text-violet-600 dark:text-violet-300/90",
-      tooltip: `#${pr.number} PR merged: ${pr.title}`,
-      url: pr.url,
-    };
-  }
-  return null;
-}
 
 function T3Wordmark() {
   return (
@@ -376,7 +306,6 @@ export default function Sidebar() {
   const getDraftThreadByProjectId = useComposerDraftStore(
     (store) => store.getDraftThreadByProjectId,
   );
-  const terminalStateByThreadId = useTerminalStateStore((state) => state.terminalStateByThreadId);
   const clearTerminalState = useTerminalStateStore((state) => state.clearTerminalState);
   const clearProjectDraftThreadId = useComposerDraftStore(
     (store) => store.clearProjectDraftThreadId,
@@ -411,8 +340,6 @@ export default function Sidebar() {
     null,
   );
   const [renamingFolderName, setRenamingFolderName] = useState("");
-  const renamingCommittedRef = useRef(false);
-  const renamingInputRef = useRef<HTMLInputElement | null>(null);
   const dragInProgressRef = useRef(false);
   const suppressProjectClickAfterDragRef = useRef(false);
   const [desktopUpdateState, setDesktopUpdateState] = useState<DesktopUpdateState | null>(null);
@@ -430,6 +357,11 @@ export default function Sidebar() {
     (state) => state.toggleFolderExpanded,
   );
   const deleteSidebarFolder = useSidebarOrganizationStore((state) => state.deleteFolder);
+  const setSidebarFolderColor = useSidebarOrganizationStore((state) => state.setFolderColor);
+  const setSidebarThreadColorMode = useSidebarOrganizationStore(
+    (state) => state.setThreadColorMode,
+  );
+  const moveSidebarNodeInStore = useSidebarOrganizationStore((state) => state.moveNode);
   const isLinuxDesktop = isElectron && isLinuxPlatform(navigator.platform);
   const shouldBrowseForProjectImmediately = isElectron && !isLinuxDesktop;
   const shouldShowProjectPathEntry = addingProject && !shouldBrowseForProjectImmediately;
@@ -450,75 +382,6 @@ export default function Sidebar() {
       hydrateSidebarProject(project.cwd, orderedThreadIds);
     }
   }, [hydrateSidebarProject, projects, threads]);
-  const threadGitTargets = useMemo(
-    () =>
-      threads.map((thread) => ({
-        threadId: thread.id,
-        branch: thread.branch,
-        cwd: thread.worktreePath ?? projectCwdById.get(thread.projectId) ?? null,
-      })),
-    [projectCwdById, threads],
-  );
-  const threadGitStatusCwds = useMemo(
-    () => [
-      ...new Set(
-        threadGitTargets
-          .filter((target) => target.branch !== null)
-          .map((target) => target.cwd)
-          .filter((cwd): cwd is string => cwd !== null),
-      ),
-    ],
-    [threadGitTargets],
-  );
-  const threadGitStatusQueries = useQueries({
-    queries: threadGitStatusCwds.map((cwd) => ({
-      ...gitStatusQueryOptions(cwd),
-      staleTime: 30_000,
-      refetchInterval: 60_000,
-    })),
-  });
-  const prByThreadId = useMemo(() => {
-    const statusByCwd = new Map<string, GitStatusResult>();
-    for (let index = 0; index < threadGitStatusCwds.length; index += 1) {
-      const cwd = threadGitStatusCwds[index];
-      if (!cwd) continue;
-      const status = threadGitStatusQueries[index]?.data;
-      if (status) {
-        statusByCwd.set(cwd, status);
-      }
-    }
-
-    const map = new Map<ThreadId, ThreadPr>();
-    for (const target of threadGitTargets) {
-      const status = target.cwd ? statusByCwd.get(target.cwd) : undefined;
-      const branchMatches =
-        target.branch !== null && status?.branch !== null && status?.branch === target.branch;
-      map.set(target.threadId, branchMatches ? (status?.pr ?? null) : null);
-    }
-    return map;
-  }, [threadGitStatusCwds, threadGitStatusQueries, threadGitTargets]);
-
-  const openPrLink = useCallback((event: React.MouseEvent<HTMLElement>, prUrl: string) => {
-    event.preventDefault();
-    event.stopPropagation();
-
-    const api = readNativeApi();
-    if (!api) {
-      toastManager.add({
-        type: "error",
-        title: "Link opening is unavailable.",
-      });
-      return;
-    }
-
-    void api.shell.openExternal(prUrl).catch((error) => {
-      toastManager.add({
-        type: "error",
-        title: "Unable to open PR link",
-        description: error instanceof Error ? error.message : "An error occurred.",
-      });
-    });
-  }, []);
 
   const focusMostRecentThreadForProject = useCallback(
     (projectId: ProjectId) => {
@@ -639,7 +502,6 @@ export default function Sidebar() {
 
   const cancelRename = useCallback(() => {
     setRenamingThreadId(null);
-    renamingInputRef.current = null;
   }, []);
   const cancelFolderRename = useCallback(() => {
     setRenamingFolder(null);
@@ -668,7 +530,6 @@ export default function Sidebar() {
       const finishRename = () => {
         setRenamingThreadId((current) => {
           if (current !== threadId) return current;
-          renamingInputRef.current = null;
           return null;
         });
       };
@@ -861,6 +722,21 @@ export default function Sidebar() {
       });
     },
   });
+  const showSidebarColorMenu = useCallback(
+    async (position: { x: number; y: number }): Promise<SidebarColor | null> => {
+      const api = readNativeApi();
+      if (!api) {
+        return null;
+      }
+
+      const clicked = await api.contextMenu.show(
+        SIDEBAR_COLOR_OPTIONS.map((entry) => ({ id: entry.id, label: entry.label })),
+        position,
+      );
+      return clicked;
+    },
+    [],
+  );
   const handleThreadContextMenu = useCallback(
     async (threadId: ThreadId, position: { x: number; y: number }) => {
       const api = readNativeApi();
@@ -869,10 +745,14 @@ export default function Sidebar() {
       if (!thread) return;
       const threadWorkspacePath =
         thread.worktreePath ?? projectCwdById.get(thread.projectId) ?? null;
+      const threadProjectCwd = projectCwdById.get(thread.projectId) ?? null;
       const clicked = await api.contextMenu.show(
         [
           { id: "rename", label: "Rename thread" },
           { id: "mark-unread", label: "Mark unread" },
+          { id: "use-folder-color", label: "Use folder color" },
+          { id: "set-color", label: "Set color" },
+          { id: "no-color", label: "No color" },
           { id: "copy-path", label: "Copy Path" },
           { id: "copy-thread-id", label: "Copy Thread ID" },
           { id: "delete", label: "Delete", destructive: true },
@@ -883,12 +763,43 @@ export default function Sidebar() {
       if (clicked === "rename") {
         setRenamingThreadId(threadId);
         setRenamingTitle(thread.title);
-        renamingCommittedRef.current = false;
         return;
       }
 
       if (clicked === "mark-unread") {
         markThreadUnread(threadId);
+        return;
+      }
+      if (clicked === "use-folder-color") {
+        if (!threadProjectCwd) return;
+        setSidebarThreadColorMode({
+          cwd: threadProjectCwd,
+          threadId,
+          colorMode: "inherit",
+          color: null,
+        });
+        return;
+      }
+      if (clicked === "no-color") {
+        if (!threadProjectCwd) return;
+        setSidebarThreadColorMode({
+          cwd: threadProjectCwd,
+          threadId,
+          colorMode: "none",
+          color: null,
+        });
+        return;
+      }
+      if (clicked === "set-color") {
+        if (!threadProjectCwd) return;
+        const color = await showSidebarColorMenu(position);
+        if (!color) return;
+        setSidebarThreadColorMode({
+          cwd: threadProjectCwd,
+          threadId,
+          colorMode: "custom",
+          color,
+        });
         return;
       }
       if (clicked === "copy-path") {
@@ -928,6 +839,8 @@ export default function Sidebar() {
       deleteThread,
       markThreadUnread,
       projectCwdById,
+      setSidebarThreadColorMode,
+      showSidebarColorMenu,
       threads,
     ],
   );
@@ -1100,6 +1013,8 @@ export default function Sidebar() {
         [
           { id: "new-subfolder", label: "New subfolder" },
           { id: "rename", label: "Rename folder" },
+          { id: "set-color", label: "Set color" },
+          { id: "clear-color", label: "Clear color" },
           { id: "delete", label: "Delete folder", destructive: true },
         ],
         position,
@@ -1124,14 +1039,37 @@ export default function Sidebar() {
         return;
       }
 
+      if (clicked === "set-color") {
+        const color = await showSidebarColorMenu(position);
+        if (!color) return;
+        setSidebarFolderColor({ cwd, folderId, color });
+        return;
+      }
+
+      if (clicked === "clear-color") {
+        setSidebarFolderColor({ cwd, folderId, color: null });
+        return;
+      }
+
       if (clicked === "delete") {
         deleteSidebarFolder(cwd, folderId);
       }
     },
-    [createSidebarFolder, deleteSidebarFolder, organizationByCwd],
+    [
+      createSidebarFolder,
+      deleteSidebarFolder,
+      organizationByCwd,
+      setSidebarFolderColor,
+      showSidebarColorMenu,
+    ],
   );
 
   const projectDnDSensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 6 },
+    }),
+  );
+  const sidebarDnDSensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: { distance: 6 },
     }),
@@ -1994,54 +1932,83 @@ export default function Sidebar() {
                           </div>
 
                           <CollapsibleContent keepMounted>
-                            <SidebarOrganizationTree
-                              nodes={derivedNodes}
-                              expandedFolderIds={projectOrganization.expandedFolderIds}
-                              activeThreadId={routeThreadId}
-                              selectedThreadIds={selectedThreadIds}
-                              renamingFolderId={
-                                renamingFolder?.cwd === project.cwd ? renamingFolder.folderId : null
-                              }
-                              renamingFolderName={
-                                renamingFolder?.cwd === project.cwd ? renamingFolderName : ""
-                              }
-                              onFolderToggle={(folderId) =>
-                                toggleSidebarFolderExpanded(project.cwd, folderId)
-                              }
-                              onFolderContextMenu={(folderId, event) => {
-                                event.preventDefault();
-                                void handleFolderContextMenu(project.cwd, folderId, {
-                                  x: event.clientX,
-                                  y: event.clientY,
-                                });
+                            <DndContext
+                              sensors={sidebarDnDSensors}
+                              collisionDetection={pointerWithin}
+                              modifiers={[
+                                restrictToVerticalAxis,
+                                restrictToFirstScrollableAncestor,
+                              ]}
+                              onDragEnd={(event) => {
+                                const node = parseSidebarNodeRef(event.active.id);
+                                const target = parseSidebarDropTarget(event.over?.id ?? null);
+                                if (!node || !target) return;
+                                moveSidebarNodeInStore({ cwd: project.cwd, node, target });
                               }}
-                              onFolderRenameChange={setRenamingFolderName}
-                              onFolderRenameCommit={commitFolderRename}
-                              onFolderRenameCancel={cancelFolderRename}
-                              onThreadClick={(threadId, event) =>
-                                handleThreadClick(event, threadId, orderedProjectThreadIds)
-                              }
-                              onThreadContextMenu={(threadId, event) => {
-                                event.preventDefault();
-                                if (
-                                  selectedThreadIds.size > 0 &&
-                                  selectedThreadIds.has(threadId)
-                                ) {
-                                  void handleMultiSelectContextMenu({
-                                    x: event.clientX,
-                                    y: event.clientY,
-                                  });
-                                } else {
-                                  if (selectedThreadIds.size > 0) {
-                                    clearSelection();
-                                  }
-                                  void handleThreadContextMenu(threadId, {
-                                    x: event.clientX,
-                                    y: event.clientY,
-                                  });
+                            >
+                              <SidebarOrganizationTree
+                                nodes={derivedNodes}
+                                expandedFolderIds={projectOrganization.expandedFolderIds}
+                                activeThreadId={routeThreadId}
+                                selectedThreadIds={selectedThreadIds}
+                                renamingFolderId={
+                                  renamingFolder?.cwd === project.cwd
+                                    ? renamingFolder.folderId
+                                    : null
                                 }
-                              }}
-                            />
+                                renamingFolderName={
+                                  renamingFolder?.cwd === project.cwd ? renamingFolderName : ""
+                                }
+                                renamingThreadId={renamingThreadId}
+                                renamingThreadTitle={renamingTitle}
+                                onFolderToggle={(folderId) =>
+                                  toggleSidebarFolderExpanded(project.cwd, folderId)
+                                }
+                                onFolderContextMenu={(folderId, event) => {
+                                  event.preventDefault();
+                                  void handleFolderContextMenu(project.cwd, folderId, {
+                                    x: event.clientX,
+                                    y: event.clientY,
+                                  });
+                                }}
+                                onFolderRenameChange={setRenamingFolderName}
+                                onFolderRenameCommit={commitFolderRename}
+                                onFolderRenameCancel={cancelFolderRename}
+                                onThreadRenameChange={setRenamingTitle}
+                                onThreadRenameCommit={() => {
+                                  if (!renamingThreadId) return;
+                                  const thread = threads.find(
+                                    (entry) => entry.id === renamingThreadId,
+                                  );
+                                  if (!thread) return;
+                                  void commitRename(renamingThreadId, renamingTitle, thread.title);
+                                }}
+                                onThreadRenameCancel={cancelRename}
+                                onThreadClick={(threadId, event) =>
+                                  handleThreadClick(event, threadId, orderedProjectThreadIds)
+                                }
+                                onThreadContextMenu={(threadId, event) => {
+                                  event.preventDefault();
+                                  if (
+                                    selectedThreadIds.size > 0 &&
+                                    selectedThreadIds.has(threadId)
+                                  ) {
+                                    void handleMultiSelectContextMenu({
+                                      x: event.clientX,
+                                      y: event.clientY,
+                                    });
+                                  } else {
+                                    if (selectedThreadIds.size > 0) {
+                                      clearSelection();
+                                    }
+                                    void handleThreadContextMenu(threadId, {
+                                      x: event.clientX,
+                                      y: event.clientY,
+                                    });
+                                  }
+                                }}
+                              />
+                            </DndContext>
                           </CollapsibleContent>
                         </Collapsible>
                       )}

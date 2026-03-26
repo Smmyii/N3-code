@@ -32,6 +32,7 @@ import {
 import { isMacPlatform } from "../lib/utils";
 import { getRouter } from "../router";
 import { useStore } from "../store";
+import { useSidebarOrganizationStore } from "../sidebarOrganizationStore";
 import { estimateTimelineMessageHeight } from "./timelineHeight";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 
@@ -104,6 +105,13 @@ interface MountedChatView {
   measureUserRow: (targetMessageId: MessageId) => Promise<UserRowMeasurement>;
   setViewport: (viewport: ViewportSpec) => Promise<void>;
   router: ReturnType<typeof getRouter>;
+}
+
+function setReactInputValue(input: HTMLInputElement, value: string) {
+  const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
+  descriptor?.set?.call(input, value);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  input.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
 function isoAt(offsetSeconds: number): string {
@@ -2216,6 +2224,139 @@ describe("ChatView timeline estimator parity (full app)", () => {
           '[data-testid^="sidebar-folder-row-"] input',
         ) as HTMLInputElement | null;
         expect(renameInput?.value).toBe("Untitled folder");
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("creates a nested subfolder and renames it inline", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createUnlockedSnapshot({
+        targetMessageId: "msg-user-sidebar-subfolder" as MessageId,
+        targetText: "sidebar subfolder",
+      }),
+    });
+
+    try {
+      const projectButton = page.getByRole("button", { name: "Project", exact: true });
+      await projectButton.click({ button: "right" });
+      await page.getByText("New folder").click();
+
+      let renameInput = document.querySelector(
+        '[data-testid^="sidebar-folder-row-"] input',
+      ) as HTMLInputElement | null;
+      expect(renameInput).not.toBeNull();
+      setReactInputValue(renameInput!, "Client");
+      renameInput!.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
+
+      await page.getByText("Client", { exact: true }).click({ button: "right" });
+      await page.getByText("New subfolder").click();
+
+      renameInput = document.querySelector(
+        '[data-testid^="sidebar-folder-row-"] input',
+      ) as HTMLInputElement | null;
+      expect(renameInput).not.toBeNull();
+      setReactInputValue(renameInput!, "Briefs");
+      renameInput!.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
+
+      await expect.element(page.getByText("Briefs", { exact: true })).toBeInTheDocument();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("deletes a folder while preserving its children in place", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createUnlockedSnapshot({
+        targetMessageId: "msg-user-sidebar-delete-folder" as MessageId,
+        targetText: "sidebar delete folder",
+      }),
+    });
+
+    try {
+      const projectButton = page.getByRole("button", { name: "Project", exact: true });
+      await projectButton.click({ button: "right" });
+      await page.getByText("New folder").click();
+
+      let renameInput = document.querySelector(
+        '[data-testid^="sidebar-folder-row-"] input',
+      ) as HTMLInputElement | null;
+      expect(renameInput).not.toBeNull();
+      setReactInputValue(renameInput!, "Archive");
+      renameInput!.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
+
+      const archiveRow = document.querySelector(
+        '[data-testid^="sidebar-folder-row-"]',
+      ) as HTMLElement | null;
+      expect(archiveRow).not.toBeNull();
+      const archiveFolderId = archiveRow!.dataset.testid?.replace("sidebar-folder-row-", "");
+      expect(archiveFolderId).toBeTruthy();
+
+      useSidebarOrganizationStore.getState().moveNode({
+        cwd: "/repo/project",
+        node: { kind: "thread", id: THREAD_ID },
+        target: { type: "inside-folder", folderId: archiveFolderId! },
+      });
+
+      await page.getByText("Archive", { exact: true }).click({ button: "right" });
+      await page.getByText("Delete folder").click();
+
+      await expect
+        .element(page.getByTestId("sidebar-thread-row-thread-browser-test"))
+        .toBeInTheDocument();
+      await vi.waitFor(() => {
+        expect(document.body.textContent).not.toContain("Archive");
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("renders folder accents stronger than inherited thread accents", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createUnlockedSnapshot({
+        targetMessageId: "msg-user-sidebar-accents" as MessageId,
+        targetText: "sidebar accents",
+      }),
+    });
+
+    try {
+      const folderId = useSidebarOrganizationStore.getState().createFolder({
+        cwd: "/repo/project",
+        parentFolderId: null,
+        name: "Plans",
+      });
+      useSidebarOrganizationStore.getState().setFolderColor({
+        cwd: "/repo/project",
+        folderId,
+        color: "teal",
+      });
+      useSidebarOrganizationStore.getState().moveNode({
+        cwd: "/repo/project",
+        node: { kind: "thread", id: THREAD_ID },
+        target: { type: "inside-folder", folderId },
+      });
+
+      const folderRow = page.getByTestId(`sidebar-folder-row-${folderId}`);
+      const threadRow = page.getByTestId("sidebar-thread-row-thread-browser-test");
+
+      await expect.element(folderRow).toHaveAttribute("data-sidebar-color", "teal");
+      await expect.element(threadRow).toHaveAttribute("data-sidebar-thread-color", "teal");
+
+      await vi.waitFor(() => {
+        const folderAccent = getComputedStyle(
+          document.querySelector(`[data-testid="sidebar-folder-row-${folderId}"]`) as HTMLElement,
+        ).color;
+        const threadAccent = getComputedStyle(
+          document.querySelector(
+            '[data-testid="sidebar-thread-row-thread-browser-test"]',
+          ) as HTMLElement,
+        ).color;
+        expect(folderAccent).not.toBe(threadAccent);
       });
     } finally {
       await mounted.cleanup();

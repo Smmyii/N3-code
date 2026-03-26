@@ -85,4 +85,23 @@ describe("sidebarOrganizationStore", () => {
     const state = readPersistedSidebarOrganizationState();
     expect(state.projectsByCwd["/repo/project"]?.rootOrder).toHaveLength(1);
   });
+
+  it("stores explicit thread color mode by cwd", () => {
+    useSidebarOrganizationStore.getState().hydrateProject("/repo/project", [THREAD_A]);
+    useSidebarOrganizationStore.getState().setThreadColorMode({
+      cwd: "/repo/project",
+      threadId: THREAD_A,
+      colorMode: "custom",
+      color: "teal",
+    });
+
+    expect(
+      useSidebarOrganizationStore.getState().projectsByCwd["/repo/project"]?.threadMetaById[
+        THREAD_A
+      ],
+    ).toEqual({
+      colorMode: "custom",
+      color: "teal",
+    });
+  });
 });
