@@ -139,9 +139,10 @@ export const useSidebarOrganizationStore = create<SidebarOrganizationStore>((set
 
         const parentFolder = nextProject.foldersById[parentFolderId];
         if (!parentFolder) {
+          const createdFolder = nextProject.foldersById[folderId]!;
           nextProject.rootOrder = [{ kind: "folder", id: folderId }, ...project.rootOrder];
           nextProject.foldersById[folderId] = {
-            ...nextProject.foldersById[folderId],
+            ...createdFolder,
             parentFolderId: null,
           };
           return nextProject;

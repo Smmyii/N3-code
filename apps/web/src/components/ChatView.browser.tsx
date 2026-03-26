@@ -2196,4 +2196,29 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await mounted.cleanup();
     }
   });
+
+  it("creates a root folder from the project context menu and starts inline rename", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createUnlockedSnapshot({
+        targetMessageId: "msg-user-sidebar-folder-create" as MessageId,
+        targetText: "sidebar folders",
+      }),
+    });
+
+    try {
+      const projectButton = page.getByRole("button", { name: "Project", exact: true });
+      await projectButton.click({ button: "right" });
+      await page.getByText("New folder").click();
+
+      await vi.waitFor(() => {
+        const renameInput = document.querySelector(
+          '[data-testid^="sidebar-folder-row-"] input',
+        ) as HTMLInputElement | null;
+        expect(renameInput?.value).toBe("Untitled folder");
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
 });
