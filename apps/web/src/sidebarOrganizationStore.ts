@@ -87,7 +87,7 @@ export interface SidebarOrganizationStore extends SidebarOrganizationState {
     input:
       | { cwd: string; threadId: ThreadId; colorMode: "inherit"; color: null }
       | { cwd: string; threadId: ThreadId; colorMode: "none"; color: null }
-      | { cwd: string; threadId: ThreadId; colorMode: "custom"; color: SidebarColor }
+      | { cwd: string; threadId: ThreadId; colorMode: "custom"; color: SidebarColor },
   ) => void;
 }
 
