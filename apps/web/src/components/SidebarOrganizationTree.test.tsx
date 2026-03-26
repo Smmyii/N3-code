@@ -39,7 +39,13 @@ describe("SidebarOrganizationTree", () => {
           onFolderToggle={() => {}}
           onFolderContextMenu={() => {}}
           onThreadClick={() => {}}
+          onThreadKeyDown={() => {}}
           onThreadContextMenu={() => {}}
+          threadStatusById={new Map()}
+          terminalStatusByThreadId={new Map()}
+          prStatusByThreadId={new Map()}
+          relativeTimeByThreadId={new Map()}
+          onThreadPrClick={() => {}}
         />
       </SidebarProvider>,
     );
@@ -48,5 +54,31 @@ describe("SidebarOrganizationTree", () => {
     expect(html).toContain('data-sidebar-color="teal"');
     expect(html).toContain('data-testid="sidebar-thread-row-thread-1"');
     expect(html).toContain('data-sidebar-thread-color="teal"');
+  });
+
+  it("renders a root drop zone for moving items back to project root", () => {
+    const html = renderToStaticMarkup(
+      <SidebarProvider>
+        <SidebarOrganizationTree
+          nodes={[]}
+          expandedFolderIds={[]}
+          activeThreadId={null}
+          selectedThreadIds={new Set()}
+          onFolderToggle={() => {}}
+          onFolderContextMenu={() => {}}
+          onThreadClick={() => {}}
+          onThreadKeyDown={() => {}}
+          onThreadContextMenu={() => {}}
+          threadStatusById={new Map()}
+          terminalStatusByThreadId={new Map()}
+          prStatusByThreadId={new Map()}
+          relativeTimeByThreadId={new Map()}
+          onThreadPrClick={() => {}}
+          rootDropTargetId="root-start"
+        />
+      </SidebarProvider>,
+    );
+
+    expect(html).toContain('data-testid="sidebar-root-drop-zone"');
   });
 });

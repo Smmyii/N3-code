@@ -2325,20 +2325,32 @@ describe("ChatView timeline estimator parity (full app)", () => {
     });
 
     try {
-      const folderId = useSidebarOrganizationStore.getState().createFolder({
-        cwd: "/repo/project",
-        parentFolderId: null,
-        name: "Plans",
-      });
-      useSidebarOrganizationStore.getState().setFolderColor({
-        cwd: "/repo/project",
-        folderId,
-        color: "teal",
-      });
+      const projectButton = page.getByRole("button", { name: "Project", exact: true });
+      await projectButton.click({ button: "right" });
+      await page.getByText("New folder").click();
+
+      let renameInput = document.querySelector(
+        '[data-testid^="sidebar-folder-row-"] input',
+      ) as HTMLInputElement | null;
+      expect(renameInput).not.toBeNull();
+      setReactInputValue(renameInput!, "Plans");
+      renameInput!.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
+
+      const folderRowElement = document.querySelector(
+        '[data-testid^="sidebar-folder-row-"]',
+      ) as HTMLElement | null;
+      expect(folderRowElement).not.toBeNull();
+      const folderId = folderRowElement!.dataset.testid?.replace("sidebar-folder-row-", "");
+      expect(folderId).toBeTruthy();
+
+      await page.getByText("Plans", { exact: true }).click({ button: "right" });
+      await page.getByText("Set color").click();
+      await page.getByText("Teal").click();
+
       useSidebarOrganizationStore.getState().moveNode({
         cwd: "/repo/project",
         node: { kind: "thread", id: THREAD_ID },
-        target: { type: "inside-folder", folderId },
+        target: { type: "inside-folder", folderId: folderId! },
       });
 
       const folderRow = page.getByTestId(`sidebar-folder-row-${folderId}`);

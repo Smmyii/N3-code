@@ -29,11 +29,12 @@ import { CSS } from "@dnd-kit/utilities";
 import {
   DEFAULT_MODEL_BY_PROVIDER,
   type DesktopUpdateState,
+  type GitStatusResult,
   ProjectId,
   ThreadId,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
 import {
   type SidebarProjectSortOrder,
@@ -45,12 +46,12 @@ import { isLinuxPlatform, isMacPlatform, newCommandId, newProjectId } from "../l
 import { useStore } from "../store";
 import { shortcutLabelForCommand } from "../keybindings";
 import { derivePendingApprovals, derivePendingUserInputs } from "../session-logic";
-import { gitRemoveWorktreeMutationOptions } from "../lib/gitReactQuery";
+import { gitRemoveWorktreeMutationOptions, gitStatusQueryOptions } from "../lib/gitReactQuery";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { readNativeApi } from "../nativeApi";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
-import { useTerminalStateStore } from "../terminalStateStore";
+import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { toastManager } from "./ui/toast";
 import {
   getArm64IntelBuildWarningDescription,
@@ -122,6 +123,70 @@ const SIDEBAR_LIST_ANIMATION_OPTIONS = {
   easing: "ease-out",
 } as const;
 const loadedProjectFaviconSrcs = new Set<string>();
+
+function formatRelativeTime(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const minutes = Math.floor(diff / 60_000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
+interface TerminalStatusIndicator {
+  label: "Terminal process running";
+  colorClass: string;
+  pulse: boolean;
+}
+
+interface PrStatusIndicator {
+  colorClass: string;
+  tooltip: string;
+  url: string;
+}
+
+type ThreadPr = GitStatusResult["pr"];
+
+function terminalStatusFromRunningIds(
+  runningTerminalIds: string[],
+): TerminalStatusIndicator | null {
+  if (runningTerminalIds.length === 0) {
+    return null;
+  }
+  return {
+    label: "Terminal process running",
+    colorClass: "text-teal-600 dark:text-teal-300/90",
+    pulse: true,
+  };
+}
+
+function prStatusIndicator(pr: ThreadPr): PrStatusIndicator | null {
+  if (!pr) return null;
+
+  if (pr.state === "open") {
+    return {
+      colorClass: "text-emerald-600 dark:text-emerald-300/90",
+      tooltip: `#${pr.number} PR open: ${pr.title}`,
+      url: pr.url,
+    };
+  }
+  if (pr.state === "closed") {
+    return {
+      colorClass: "text-zinc-500 dark:text-zinc-400/80",
+      tooltip: `#${pr.number} PR closed: ${pr.title}`,
+      url: pr.url,
+    };
+  }
+  if (pr.state === "merged") {
+    return {
+      colorClass: "text-violet-600 dark:text-violet-300/90",
+      tooltip: `#${pr.number} PR merged: ${pr.title}`,
+      url: pr.url,
+    };
+  }
+  return null;
+}
 
 function T3Wordmark() {
   return (
@@ -306,6 +371,7 @@ export default function Sidebar() {
   const getDraftThreadByProjectId = useComposerDraftStore(
     (store) => store.getDraftThreadByProjectId,
   );
+  const terminalStateByThreadId = useTerminalStateStore((state) => state.terminalStateByThreadId);
   const clearTerminalState = useTerminalStateStore((state) => state.clearTerminalState);
   const clearProjectDraftThreadId = useComposerDraftStore(
     (store) => store.clearProjectDraftThreadId,
@@ -382,6 +448,74 @@ export default function Sidebar() {
       hydrateSidebarProject(project.cwd, orderedThreadIds);
     }
   }, [hydrateSidebarProject, projects, threads]);
+  const threadGitTargets = useMemo(
+    () =>
+      threads.map((thread) => ({
+        threadId: thread.id,
+        branch: thread.branch,
+        cwd: thread.worktreePath ?? projectCwdById.get(thread.projectId) ?? null,
+      })),
+    [projectCwdById, threads],
+  );
+  const threadGitStatusCwds = useMemo(
+    () => [
+      ...new Set(
+        threadGitTargets
+          .filter((target) => target.branch !== null)
+          .map((target) => target.cwd)
+          .filter((cwd): cwd is string => cwd !== null),
+      ),
+    ],
+    [threadGitTargets],
+  );
+  const threadGitStatusQueries = useQueries({
+    queries: threadGitStatusCwds.map((cwd) => ({
+      ...gitStatusQueryOptions(cwd),
+      staleTime: 30_000,
+      refetchInterval: 60_000,
+    })),
+  });
+  const prByThreadId = useMemo(() => {
+    const statusByCwd = new Map<string, GitStatusResult>();
+    for (let index = 0; index < threadGitStatusCwds.length; index += 1) {
+      const cwd = threadGitStatusCwds[index];
+      if (!cwd) continue;
+      const status = threadGitStatusQueries[index]?.data;
+      if (status) {
+        statusByCwd.set(cwd, status);
+      }
+    }
+
+    const map = new Map<ThreadId, ThreadPr>();
+    for (const target of threadGitTargets) {
+      const status = target.cwd ? statusByCwd.get(target.cwd) : undefined;
+      const branchMatches =
+        target.branch !== null && status?.branch !== null && status?.branch === target.branch;
+      map.set(target.threadId, branchMatches ? (status?.pr ?? null) : null);
+    }
+    return map;
+  }, [threadGitStatusCwds, threadGitStatusQueries, threadGitTargets]);
+  const openPrLink = useCallback((event: React.MouseEvent<HTMLElement>, prUrl: string) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const api = readNativeApi();
+    if (!api) {
+      toastManager.add({
+        type: "error",
+        title: "Link opening is unavailable.",
+      });
+      return;
+    }
+
+    void api.shell.openExternal(prUrl).catch((error) => {
+      toastManager.add({
+        type: "error",
+        title: "Unable to open PR link",
+        description: error instanceof Error ? error.message : "An error occurred.",
+      });
+    });
+  }, []);
 
   const focusMostRecentThreadForProject = useCallback(
     (projectId: ProjectId) => {
@@ -933,6 +1067,21 @@ export default function Sidebar() {
       setSelectionAnchor,
       toggleThreadSelection,
     ],
+  );
+  const handleThreadKeyDown = useCallback(
+    (event: React.KeyboardEvent, threadId: ThreadId) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      if (selectedThreadIds.size > 0) {
+        clearSelection();
+      }
+      setSelectionAnchor(threadId);
+      void navigate({
+        to: "/$threadId",
+        params: { threadId },
+      });
+    },
+    [clearSelection, navigate, selectedThreadIds.size, setSelectionAnchor],
   );
 
   const handleProjectContextMenu = useCallback(
@@ -1847,6 +1996,47 @@ export default function Sidebar() {
                     orderedThreads: projectThreads,
                     organization: projectOrganization,
                   });
+                  const threadStatusById = new Map(
+                    projectThreads.map(
+                      (thread) =>
+                        [
+                          thread.id,
+                          resolveThreadStatusPill({
+                            thread,
+                            hasPendingApprovals:
+                              derivePendingApprovals(thread.activities).length > 0,
+                            hasPendingUserInput:
+                              derivePendingUserInputs(thread.activities).length > 0,
+                          }),
+                        ] as const,
+                    ),
+                  );
+                  const terminalStatusByThreadId = new Map(
+                    projectThreads.map(
+                      (thread) =>
+                        [
+                          thread.id,
+                          terminalStatusFromRunningIds(
+                            selectThreadTerminalState(terminalStateByThreadId, thread.id)
+                              .runningTerminalIds,
+                          ),
+                        ] as const,
+                    ),
+                  );
+                  const prStatusByThreadId = new Map(
+                    projectThreads.map(
+                      (thread) =>
+                        [
+                          thread.id,
+                          prStatusIndicator(prByThreadId.get(thread.id) ?? null),
+                        ] as const,
+                    ),
+                  );
+                  const relativeTimeByThreadId = new Map(
+                    projectThreads.map(
+                      (thread) => [thread.id, formatRelativeTime(thread.createdAt)] as const,
+                    ),
+                  );
 
                   return (
                     <SortableProjectItem key={project.id} projectId={project.id}>
@@ -1987,6 +2177,9 @@ export default function Sidebar() {
                                 onThreadClick={(threadId, event) =>
                                   handleThreadClick(event, threadId, orderedProjectThreadIds)
                                 }
+                                onThreadKeyDown={(threadId, event) =>
+                                  handleThreadKeyDown(event, threadId)
+                                }
                                 onThreadContextMenu={(threadId, event) => {
                                   event.preventDefault();
                                   if (
@@ -2007,6 +2200,12 @@ export default function Sidebar() {
                                     });
                                   }
                                 }}
+                                threadStatusById={threadStatusById}
+                                terminalStatusByThreadId={terminalStatusByThreadId}
+                                prStatusByThreadId={prStatusByThreadId}
+                                relativeTimeByThreadId={relativeTimeByThreadId}
+                                onThreadPrClick={openPrLink}
+                                rootDropTargetId="root-start"
                               />
                             </DndContext>
                           </CollapsibleContent>
