@@ -56,6 +56,7 @@
 ### Task 1: Pure Sidebar Organization Model
 
 **Files:**
+
 - Create: `apps/web/src/components/Sidebar.organization.ts`
 - Test: `apps/web/src/components/Sidebar.organization.test.ts`
 
@@ -170,9 +171,7 @@ describe("resolveThreadAccentColor", () => {
     expect(resolveThreadAccentColor({ threadMeta: { colorMode: "custom", color: "rose" } })).toBe(
       "rose",
     );
-    expect(resolveThreadAccentColor({ threadMeta: { colorMode: "none", color: null } })).toBe(
-      null,
-    );
+    expect(resolveThreadAccentColor({ threadMeta: { colorMode: "none", color: null } })).toBe(null);
     expect(
       resolveThreadAccentColor({
         threadMeta: { colorMode: "inherit", color: null },
@@ -214,20 +213,11 @@ Expected: FAIL with module-not-found / missing-export errors.
 import type { ThreadId } from "@t3tools/contracts";
 import type { Thread } from "../types";
 
-export type SidebarColor =
-  | "slate"
-  | "blue"
-  | "teal"
-  | "emerald"
-  | "amber"
-  | "rose"
-  | "violet";
+export type SidebarColor = "slate" | "blue" | "teal" | "emerald" | "amber" | "rose" | "violet";
 
 export type SidebarThreadColorMode = "inherit" | "custom" | "none";
 
-export type SidebarNodeRef =
-  | { kind: "folder"; id: string }
-  | { kind: "thread"; id: ThreadId };
+export type SidebarNodeRef = { kind: "folder"; id: string } | { kind: "thread"; id: ThreadId };
 
 export interface SidebarFolder {
   id: string;
@@ -348,8 +338,10 @@ export function deleteFolderAndPromoteChildren(
   const parentOrder =
     folder.parentFolderId === null
       ? organization.rootOrder
-      : organization.foldersById[folder.parentFolderId]?.childOrder ?? [];
-  const folderIndex = parentOrder.findIndex((node) => node.kind === "folder" && node.id === folderId);
+      : (organization.foldersById[folder.parentFolderId]?.childOrder ?? []);
+  const folderIndex = parentOrder.findIndex(
+    (node) => node.kind === "folder" && node.id === folderId,
+  );
   const promoted = folder.childOrder;
   const nextParentOrder = parentOrder.flatMap((node, index) =>
     index === folderIndex ? promoted : [node],
@@ -424,7 +416,12 @@ export function deriveSidebarNodes(input: {
           depth,
           color: folder.color,
           parentFolderId,
-          children: visit(folder.childOrder, depth + 1, folder.id, folder.color ?? inheritedFolderColor),
+          children: visit(
+            folder.childOrder,
+            depth + 1,
+            folder.id,
+            folder.color ?? inheritedFolderColor,
+          ),
         },
       ];
     });
@@ -512,6 +509,7 @@ git commit -m "feat: add sidebar organization model"
 ### Task 2: Persisted Sidebar Organization Store
 
 **Files:**
+
 - Create: `apps/web/src/sidebarOrganizationStore.ts`
 - Test: `apps/web/src/sidebarOrganizationStore.test.ts`
 
@@ -754,6 +752,7 @@ git commit -m "feat: add persisted sidebar organization store"
 ### Task 3: Sidebar Organization Tree Components
 
 **Files:**
+
 - Create: `apps/web/src/components/SidebarFolderRow.tsx`
 - Create: `apps/web/src/components/SidebarThreadRow.tsx`
 - Create: `apps/web/src/components/SidebarOrganizationTree.tsx`
@@ -985,6 +984,7 @@ git commit -m "feat: add sidebar organization tree components"
 ### Task 4: Sidebar Host Integration and Folder Lifecycle
 
 **Files:**
+
 - Modify: `apps/web/src/components/Sidebar.tsx`
 
 - [ ] **Step 1: Add the failing integration assertions to the browser harness**
@@ -1022,7 +1022,9 @@ const organizationByCwd = useSidebarOrganizationStore((state) => state.projectsB
 const hydrateSidebarProject = useSidebarOrganizationStore((state) => state.hydrateProject);
 const createSidebarFolder = useSidebarOrganizationStore((state) => state.createFolder);
 const renameSidebarFolder = useSidebarOrganizationStore((state) => state.renameFolder);
-const toggleSidebarFolderExpanded = useSidebarOrganizationStore((state) => state.toggleFolderExpanded);
+const toggleSidebarFolderExpanded = useSidebarOrganizationStore(
+  (state) => state.toggleFolderExpanded,
+);
 const deleteSidebarFolder = useSidebarOrganizationStore((state) => state.deleteFolder);
 
 const [renamingFolder, setRenamingFolder] = useState<{ cwd: string; folderId: string } | null>(
@@ -1044,8 +1046,7 @@ useEffect(() => {
 ```tsx
 const derivedNodes = deriveSidebarNodes({
   orderedThreads: projectThreads,
-  organization:
-    organizationByCwd[project.cwd] ?? createEmptySidebarProjectOrganization(),
+  organization: organizationByCwd[project.cwd] ?? createEmptySidebarProjectOrganization(),
 });
 
 <SidebarOrganizationTree
@@ -1126,7 +1127,11 @@ const handleFolderContextMenu = useCallback(
     );
 
     if (clicked === "new-subfolder") {
-      const childId = createSidebarFolder({ cwd, parentFolderId: folderId, name: "Untitled folder" });
+      const childId = createSidebarFolder({
+        cwd,
+        parentFolderId: folderId,
+        name: "Untitled folder",
+      });
       setRenamingFolder({ cwd, folderId: childId });
       setRenamingFolderName("Untitled folder");
       return;
@@ -1184,6 +1189,7 @@ git commit -m "feat: integrate sidebar folder organization"
 ### Task 5: Thread Colors and Mixed Drag/Drop
 
 **Files:**
+
 - Modify: `apps/web/src/components/Sidebar.organization.ts`
 - Modify: `apps/web/src/sidebarOrganizationStore.ts`
 - Modify: `apps/web/src/components/SidebarFolderRow.tsx`
@@ -1246,7 +1252,10 @@ export const SIDEBAR_COLOR_OPTIONS: ReadonlyArray<{ id: SidebarColor; label: str
 ```
 
 ```tsx
-async function showSidebarColorMenu(position: { x: number; y: number }): Promise<SidebarColor | null> {
+async function showSidebarColorMenu(position: {
+  x: number;
+  y: number;
+}): Promise<SidebarColor | null> {
   const api = readNativeApi();
   if (!api) return null;
   const clicked = await api.contextMenu.show(
@@ -1256,41 +1265,54 @@ async function showSidebarColorMenu(position: { x: number; y: number }): Promise
   return clicked;
 }
 
-const handleThreadContextMenu = useCallback(async (threadId: ThreadId, position: { x: number; y: number }) => {
-  const thread = threads.find((entry) => entry.id === threadId);
-  const threadProjectCwd = thread ? projectCwdById.get(thread.projectId) ?? null : null;
-  if (!thread || !threadProjectCwd) return;
+const handleThreadContextMenu = useCallback(
+  async (threadId: ThreadId, position: { x: number; y: number }) => {
+    const thread = threads.find((entry) => entry.id === threadId);
+    const threadProjectCwd = thread ? (projectCwdById.get(thread.projectId) ?? null) : null;
+    if (!thread || !threadProjectCwd) return;
 
-  const clicked = await api.contextMenu.show(
-    [
-      { id: "rename", label: "Rename thread" },
-      { id: "mark-unread", label: "Mark unread" },
-      { id: "use-folder-color", label: "Use folder color" },
-      { id: "set-color", label: "Set color" },
-      { id: "no-color", label: "No color" },
-      { id: "copy-path", label: "Copy Path" },
-      { id: "copy-thread-id", label: "Copy Thread ID" },
-      { id: "delete", label: "Delete", destructive: true },
-    ],
-    position,
-  );
+    const clicked = await api.contextMenu.show(
+      [
+        { id: "rename", label: "Rename thread" },
+        { id: "mark-unread", label: "Mark unread" },
+        { id: "use-folder-color", label: "Use folder color" },
+        { id: "set-color", label: "Set color" },
+        { id: "no-color", label: "No color" },
+        { id: "copy-path", label: "Copy Path" },
+        { id: "copy-thread-id", label: "Copy Thread ID" },
+        { id: "delete", label: "Delete", destructive: true },
+      ],
+      position,
+    );
 
-  if (clicked === "use-folder-color") {
-    setSidebarThreadColorMode({ cwd: threadProjectCwd, threadId, colorMode: "inherit", color: null });
-    return;
-  }
-  if (clicked === "no-color") {
-    setSidebarThreadColorMode({ cwd: threadProjectCwd, threadId, colorMode: "none", color: null });
-    return;
-  }
-  if (clicked === "set-color") {
-    const color = await showSidebarColorMenu(position);
-    if (color) {
-      setSidebarThreadColorMode({ cwd: threadProjectCwd, threadId, colorMode: "custom", color });
+    if (clicked === "use-folder-color") {
+      setSidebarThreadColorMode({
+        cwd: threadProjectCwd,
+        threadId,
+        colorMode: "inherit",
+        color: null,
+      });
+      return;
     }
-    return;
-  }
-}, []);
+    if (clicked === "no-color") {
+      setSidebarThreadColorMode({
+        cwd: threadProjectCwd,
+        threadId,
+        colorMode: "none",
+        color: null,
+      });
+      return;
+    }
+    if (clicked === "set-color") {
+      const color = await showSidebarColorMenu(position);
+      if (color) {
+        setSidebarThreadColorMode({ cwd: threadProjectCwd, threadId, colorMode: "custom", color });
+      }
+      return;
+    }
+  },
+  [],
+);
 ```
 
 ```tsx
@@ -1351,7 +1373,7 @@ const sidebarDnDSensors = useSensors(
     activeDragId={activeSidebarDragId}
     activeDropTargetId={activeSidebarDropTargetId}
   />
-</DndContext>
+</DndContext>;
 ```
 
 ```tsx
@@ -1447,6 +1469,7 @@ git commit -m "feat: add sidebar organization drag and color controls"
 ### Task 6: Full Regression Pass and Build Verification
 
 **Files:**
+
 - Modify: `apps/web/src/components/ChatView.browser.tsx`
 - Modify: `apps/web/src/components/Sidebar.organization.test.ts`
 - Modify: `apps/web/src/sidebarOrganizationStore.test.ts`
@@ -1507,7 +1530,9 @@ it("deletes a folder while preserving its children in place", async () => {
     await folderRow.click({ button: "right" });
     await page.getByText("Delete folder").click();
 
-    await expect.element(page.getByTestId("sidebar-thread-row-thread-browser-test")).toBeInTheDocument();
+    await expect
+      .element(page.getByTestId("sidebar-thread-row-thread-browser-test"))
+      .toBeInTheDocument();
     await expect.element(page.getByText("Archive", { exact: true })).not.toBeInTheDocument();
   } finally {
     await mounted.cleanup();
@@ -1542,10 +1567,7 @@ it("renders folder accents stronger than thread accents", async () => {
     const folderAccentRow = page
       .getByText("Plans", { exact: true })
       .locator("xpath=ancestor::*[@data-sidebar-color][1]");
-    await expect.element(folderAccentRow).toHaveAttribute(
-      "data-sidebar-color",
-      "teal",
-    );
+    await expect.element(folderAccentRow).toHaveAttribute("data-sidebar-color", "teal");
     await expect.element(threadRow).toHaveAttribute("data-sidebar-thread-color", "teal");
   } finally {
     await mounted.cleanup();

@@ -20,7 +20,6 @@ import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { toWorkspaceRelativePath } from "../lib/fileWorkspace";
 import { useStore } from "../store";
 import { useSettings } from "../hooks/useSettings";
-import { formatShortTimestamp } from "../timestampFormat";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
 import { DiffChangesTab } from "./DiffChangesTab";
 import { DiffFilesTab } from "./DiffFilesTab";

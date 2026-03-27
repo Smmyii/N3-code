@@ -50,7 +50,7 @@ export interface ServerConfigShape extends ServerDerivedPaths {
 
 export const deriveServerPaths = Effect.fn(function* (
   baseDir: ServerConfigShape["baseDir"],
-  devUrl: ServerConfigShape["devUrl"],
+  _devUrl: ServerConfigShape["devUrl"],
 ): Effect.fn.Return<ServerDerivedPaths, never, Path.Path> {
   const { join } = yield* Path.Path;
   // N3-code: always use "userdata" so dev and desktop share the same state
