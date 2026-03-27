@@ -1,6 +1,6 @@
 # N3 Code
 
-A customized fork of [T3 Code](https://github.com/pingdotgg/t3code) — a minimal web GUI for coding agents.
+A customized fork of the amazing [T3 Code](https://github.com/pingdotgg/t3code), minimal web GUI for coding agents.
 
 ## What's different
 
