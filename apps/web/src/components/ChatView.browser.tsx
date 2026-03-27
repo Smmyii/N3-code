@@ -4,12 +4,14 @@ import "../index.css";
 import {
   type InstalledSkillItem,
   ORCHESTRATION_WS_METHODS,
+  CheckpointRef,
   type MessageId,
   type OrchestrationReadModel,
   type ProjectEntry,
   type ProjectId,
   type ServerConfig,
   type ThreadId,
+  type TurnId,
   type WsWelcomePayload,
   WS_CHANNELS,
   WS_METHODS,
@@ -60,6 +62,8 @@ interface TestFixture {
     warnings: string[];
   };
   workspaceEntries: ProjectEntry[];
+  checkpointDiffByKey: Record<string, string>;
+  workspaceFilesByPath: Record<string, string>;
 }
 
 let fixture: TestFixture;
@@ -308,6 +312,8 @@ function buildFixture(snapshot: OrchestrationReadModel): TestFixture {
       warnings: [],
     },
     workspaceEntries: [],
+    checkpointDiffByKey: {},
+    workspaceFilesByPath: {},
   };
 }
 
@@ -497,6 +503,33 @@ function resolveWsRpc(body: WsRequestEnvelope["body"]): unknown {
     return {
       entries: fixture.workspaceEntries,
       truncated: false,
+    };
+  }
+  if (tag === WS_METHODS.projectsReadFile) {
+    const relativePath = String(body.relativePath ?? "");
+    const contents = fixture.workspaceFilesByPath[relativePath];
+    return {
+      contents: contents ?? "",
+      exists: contents !== undefined,
+    };
+  }
+  if (tag === WS_METHODS.projectsWriteFile) {
+    const relativePath = String(body.relativePath ?? "");
+    const contents = String(body.contents ?? "");
+    fixture.workspaceFilesByPath[relativePath] = contents;
+    return { relativePath };
+  }
+  if (tag === ORCHESTRATION_WS_METHODS.getTurnDiff) {
+    return {
+      diff:
+        fixture.checkpointDiffByKey[
+          `turn:${String(body.fromTurnCount ?? "")}:${String(body.toTurnCount ?? "")}`
+        ] ?? "",
+    };
+  }
+  if (tag === ORCHESTRATION_WS_METHODS.getFullThreadDiff) {
+    return {
+      diff: fixture.checkpointDiffByKey[`full:${String(body.toTurnCount ?? "")}`] ?? "",
     };
   }
   if (tag === WS_METHODS.skillsList || tag === WS_METHODS.skillsRefresh) {
@@ -2411,6 +2444,261 @@ describe("ChatView timeline estimator parity (full app)", () => {
       expect(document.activeElement).toBe(renameInput);
       setReactInputValue(renameInput, "Thread rename with spaces");
       expect(renameInput.value).toBe("Thread rename with spaces");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("renders compact turn controls and collapsible changed files in the diff workspace", async () => {
+    const snapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-diff-workspace" as MessageId,
+      targetText: "open the diff workspace",
+    });
+    const [thread, ...rest] = snapshot.threads;
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: thread
+        ? {
+            ...snapshot,
+            threads: [
+              {
+                ...thread,
+                checkpoints: [
+                  {
+                    turnId: "turn-12" as TurnId,
+                    checkpointTurnCount: 12,
+                    checkpointRef: "checkpoint-12" as CheckpointRef,
+                    status: "ready",
+                    assistantMessageId: null,
+                    completedAt: NOW_ISO,
+                    files: [
+                      { path: "docs/plan.md", kind: "modified", additions: 12, deletions: 2 },
+                      { path: "docs/notes.txt", kind: "modified", additions: 4, deletions: 0 },
+                      { path: "src/app.ts", kind: "modified", additions: 2, deletions: 1 },
+                    ],
+                  },
+                ],
+              },
+              ...rest,
+            ],
+          }
+        : snapshot,
+      configureFixture: (nextFixture) => {
+        nextFixture.checkpointDiffByKey = {
+          "turn:11:12": [
+            "diff --git a/docs/plan.md b/docs/plan.md",
+            "--- a/docs/plan.md",
+            "+++ b/docs/plan.md",
+            "@@ -1,1 +1,2 @@",
+            "-# Implementation plan",
+            "+# Implementation plan",
+            "+- [ ] collapsed work",
+          ].join("\n"),
+        };
+      },
+    });
+
+    try {
+      await mounted.router.navigate({
+        to: "/$threadId",
+        params: { threadId: THREAD_ID },
+        search: { diff: "1", diffTurnId: "turn-12" as TurnId },
+      });
+      await waitForLayout();
+
+      await expect.element(page.getByRole("tab", { name: "Changes" })).toBeVisible();
+      await expect.element(page.getByRole("button", { name: "More turns" })).toBeVisible();
+      await expect.element(page.getByRole("button", { name: "Collapse all files" })).toBeVisible();
+
+      await page.getByRole("button", { name: "Collapse all files" }).click();
+      await expect.element(page.getByText("docs/plan.md")).toBeVisible();
+      await expect.element(page.getByText("collapsed work")).not.toBeInTheDocument();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("opens a markdown file in the focused editor and confirms before saving", async () => {
+    const snapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-diff-editor" as MessageId,
+      targetText: "edit a diff file",
+    });
+    const [thread, ...rest] = snapshot.threads;
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: thread
+        ? {
+            ...snapshot,
+            threads: [
+              {
+                ...thread,
+                checkpoints: [
+                  {
+                    turnId: "turn-12" as TurnId,
+                    checkpointTurnCount: 12,
+                    checkpointRef: "checkpoint-12" as CheckpointRef,
+                    status: "ready",
+                    assistantMessageId: null,
+                    completedAt: NOW_ISO,
+                    files: [
+                      { path: "docs/plan.md", kind: "modified", additions: 12, deletions: 2 },
+                    ],
+                  },
+                ],
+              },
+              ...rest,
+            ],
+          }
+        : snapshot,
+      configureFixture: (nextFixture) => {
+        nextFixture.checkpointDiffByKey = {
+          "turn:11:12": [
+            "diff --git a/docs/plan.md b/docs/plan.md",
+            "--- a/docs/plan.md",
+            "+++ b/docs/plan.md",
+            "@@ -1,1 +1,2 @@",
+            "-# Plan",
+            "+# Plan",
+            "+- [ ] original step",
+          ].join("\n"),
+        };
+        nextFixture.workspaceFilesByPath = {
+          "docs/plan.md": "# Plan\n\n- [ ] original step\n",
+        };
+      },
+    });
+
+    try {
+      await mounted.router.navigate({
+        to: "/$threadId",
+        params: { threadId: THREAD_ID },
+        search: { diff: "1", diffTurnId: "turn-12" as TurnId },
+      });
+      await waitForLayout();
+
+      await page.getByRole("button", { name: "Expand docs/plan.md" }).click();
+      await expect
+        .element(page.getByRole("tab", { name: "Editor" }))
+        .toHaveAttribute("data-selected", "true");
+      await page.getByRole("button", { name: "Edit file" }).click();
+      await page
+        .getByRole("textbox", { name: "File contents" })
+        .fill("# Plan\n\n- [ ] updated step\n");
+      await page.getByRole("button", { name: "Save file" }).click();
+      await expect
+        .element(page.getByRole("alertdialog"))
+        .toContain("Write changes to docs/plan.md?");
+      await page.getByRole("button", { name: "Confirm save" }).click();
+      await expect.element(page.getByText("updated step")).toBeVisible();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("opens workspace files from the Files tab explorer", async () => {
+    const snapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-files-tab" as MessageId,
+      targetText: "open files tab",
+    });
+    const [thread, ...rest] = snapshot.threads;
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: thread
+        ? {
+            ...snapshot,
+            threads: [
+              {
+                ...thread,
+                checkpoints: [
+                  {
+                    turnId: "turn-12" as TurnId,
+                    checkpointTurnCount: 12,
+                    checkpointRef: "checkpoint-12" as CheckpointRef,
+                    status: "ready",
+                    assistantMessageId: null,
+                    completedAt: NOW_ISO,
+                    files: [
+                      { path: "docs/plan.md", kind: "modified", additions: 12, deletions: 2 },
+                    ],
+                  },
+                ],
+              },
+              ...rest,
+            ],
+          }
+        : snapshot,
+      configureFixture: (nextFixture) => {
+        nextFixture.workspaceEntries = [
+          { path: "docs", kind: "directory" },
+          { path: "docs/plan.md", kind: "file", parentPath: "docs" },
+          { path: ".env", kind: "file" },
+        ];
+        nextFixture.workspaceFilesByPath = {
+          "docs/plan.md": "# Plan\n\n- [ ] from explorer\n",
+        };
+      },
+    });
+
+    try {
+      await mounted.router.navigate({
+        to: "/$threadId",
+        params: { threadId: THREAD_ID },
+        search: { diff: "1", diffTab: "files" },
+      });
+      await waitForLayout();
+
+      await page.getByRole("tab", { name: "Files" }).click();
+      await expect.element(page.getByRole("textbox", { name: "Filter files" })).toBeVisible();
+      await page.getByRole("button", { name: "docs/plan.md" }).click();
+      await expect
+        .element(page.getByRole("tab", { name: "Editor" }))
+        .toHaveAttribute("data-selected", "true");
+      await expect.element(page.getByText("# Plan")).toBeVisible();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("opens assistant file links in the diff workspace without replacing external open", async () => {
+    const snapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-inline-open" as MessageId,
+      targetText: "open inline file links",
+    });
+    const [thread, ...rest] = snapshot.threads;
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: {
+        ...snapshot,
+        threads: thread
+          ? [
+              {
+                ...thread,
+                messages: [
+                  ...thread.messages,
+                  createAssistantMessage({
+                    id: "msg-assistant-inline-open" as MessageId,
+                    text: "The review is saved to [review-round-1.md](/repo/project/review-round-1.md).",
+                    offsetSeconds: 999,
+                  }),
+                ],
+              },
+              ...rest,
+            ]
+          : snapshot.threads,
+      },
+      configureFixture: (nextFixture) => {
+        nextFixture.workspaceFilesByPath = {
+          "review-round-1.md": "# Review\n\n10 critical and 6 minor issues.\n",
+        };
+      },
+    });
+
+    try {
+      await page.getByRole("button", { name: "Open review-round-1.md in app" }).click();
+      await expect
+        .element(page.getByRole("tab", { name: "Editor" }))
+        .toHaveAttribute("data-selected", "true");
+      await expect.element(page.getByText("10 critical and 6 minor issues.")).toBeVisible();
     } finally {
       await mounted.cleanup();
     }

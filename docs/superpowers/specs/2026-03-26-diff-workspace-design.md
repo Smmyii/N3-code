@@ -6,7 +6,7 @@ This spec covers the first sub-project only:
 
 - expanding the current diff viewer into a shared in-house file workspace
 - adding lightweight in-app file viewing/editing
-- adding an in-panel file explorer
+- adding an in-panel Files tab for search-first workspace browsing
 - reorganizing the diff panel header so it can support this workspace cleanly
 
 This spec does not cover:
@@ -23,7 +23,7 @@ Turn the current diff panel into a compact workspace surface that can:
 - keep the existing diff workflow intact
 - let the user open a changed file into a focused in-app viewer/editor
 - let the user open AI-sent file links in-app as an additional action alongside external editor opening
-- provide a lightweight file explorer in the same panel area
+- provide a lightweight search-first file browser in the same panel area
 - support small edits for plan and workspace text files without forcing a round-trip to Cursor, VS Code, or Finder
 
 The result should feel like a focused extension of the existing diff viewer, not a separate application hidden inside the app.
@@ -37,7 +37,8 @@ The user can:
 - choose a changed file and make it the main focus of the panel with `Expand`
 - edit `.md`, `.txt`, and `.env`-family files in-app with a confirmation before writing changes
 - open a file from chat links directly into the same in-app workspace
-- browse the workspace in a `Files` tab without leaving the current panel
+- search and browse indexed workspace entries in a `Files` tab without leaving the current panel
+- understand when the `Files` tab is showing a truncated partial result set
 
 The user cannot, in V1:
 
@@ -72,7 +73,7 @@ The header should contain:
   - `Editor`
 - context-sensitive controls:
   - diff view/wrap controls only when the `Changes` tab is active
-  - explorer filter controls only when the `Files` tab is active
+  - `Files` filter controls only when the `Files` tab is active
   - file actions only when the `Editor` tab is active
 
 This header is intentionally designed as a future expansion rail. More workspace modes can be added later without repeating another layout rewrite.
@@ -87,9 +88,9 @@ The user wants the same in-app file experience from three entry points:
 
 - changed files in the diff view
 - inline file links in assistant messages
-- the new file explorer
+- the new `Files` tab
 
-If the focused viewer/editor is implemented only inside the diff list, the same logic would need to be extracted later for chat links and the explorer. Building the shared surface now is the smallest design that avoids that rewrite.
+If the focused viewer/editor is implemented only inside the diff list, the same logic would need to be extracted later for chat links and the `Files` tab. Building the shared surface now is the smallest design that avoids that rewrite.
 
 ### Existing repo primitives to reuse
 
@@ -99,6 +100,21 @@ If the focused viewer/editor is implemented only inside the diff list, the same 
 - current route search already controls diff panel open/close and selected turn/file context
 
 V1 should compose these primitives rather than introducing a second file-access subsystem.
+
+### Canonical workspace root
+
+All in-app read, write, and in-app open flows must use one canonical workspace root:
+
+- `activeThread.worktreePath ?? activeProject.cwd`
+
+This applies to:
+
+- diff-row `Expand` and `Edit`
+- `Files` tab reads
+- chat-link `Open in app`
+- focused file `readFile` and `writeFile`
+
+External-open behavior can keep using resolved absolute file paths. In-app behavior should normalize those paths back to workspace-relative paths against the canonical workspace root before routing them into the workspace surface.
 
 ## Components
 
@@ -140,12 +156,12 @@ Responsibilities:
 
 Responsibilities:
 
-- lightweight workspace explorer in the same panel
-- tree/list rendering built from workspace entry data
+- search-first workspace browser in the same panel
+- tree/list rendering built from indexed workspace entry results
 - search/filter support
 - opening the shared focused file surface
 
-V1 should build the explorer from workspace entry indexing and client-side tree construction. It should use the existing workspace entry index, fetched for the active workspace and rendered into a client-side directory tree. V1 does not require a dedicated new server-side file-tree API.
+V1 should build the `Files` tab from workspace entry indexing and client-side tree construction. It should use the existing workspace entry index, fetched for the active workspace and rendered into a client-side tree over the returned result set. V1 does not require a dedicated new server-side file-tree API, so the `Files` tab must be framed as search-first and must handle truncated result sets explicitly instead of promising a complete explorer.
 
 ### `FocusedFileSurface`
 
@@ -190,10 +206,26 @@ The existing diff route search should be extended to cover workspace navigation 
 The route search should represent:
 
 - whether the diff workspace is open
-- selected turn, when relevant
-- selected file path
+- selected `Changes` dataset turn, when relevant
+- selected file path inside the current `Changes` dataset
 - selected tab: `changes | files | editor`
-- selected file mode: `preview | edit`
+- selected focused workspace file path
+- selected focused workspace file mode: `preview | edit`
+
+Route semantics:
+
+- `diffFilePath` is only for file focus inside the current diff dataset
+- `workspaceFilePath` is only for the shared focused viewer/editor
+- `workspaceFilePath` is workspace-relative to the canonical workspace root
+- `workspaceFileMode` is only meaningful when `workspaceFilePath` is present
+- the `Editor` tab must work without any selected diff turn or diff-file focus
+- cross-thread navigation should retain only panel-open and active-tab state:
+  - retain `diff`
+  - retain `diffTab`
+  - clear `diffTurnId`
+  - clear `diffFilePath`
+  - clear `workspaceFilePath`
+  - clear `workspaceFileMode`
 
 Examples:
 
@@ -204,24 +236,26 @@ Examples:
   - `diffTab=changes`
 - opening a chat file link in-app:
   - `diff=1`
-  - `diffFilePath=<path>`
   - `diffTab=editor`
+  - `workspaceFilePath=<workspace-relative-path>`
+  - `workspaceFileMode=preview`
   - no turn-specific requirement
-- opening from explorer:
+- opening from `Files`:
   - `diff=1`
   - `diffTab=editor`
-  - `diffFilePath=<path>`
+  - `workspaceFilePath=<workspace-relative-path>`
 
 This keeps in-app file openings navigable, bookmarkable, and internally consistent.
 
 ### Local component state
 
-Ephemeral state should remain local to the focused file surface or explorer:
+Ephemeral state should remain local to the focused file surface or `Files` tab:
 
 - draft text
 - save confirmation dialog visibility
 - unsaved-changes prompt visibility
 - local filter text
+- local truncated-results messaging
 - transient expanded/collapsed UI state
 
 V1 should not introduce a new global Zustand store for editor state.
@@ -271,7 +305,7 @@ Action behavior:
 
 ## Files Tab Behavior
 
-The `Files` tab is a lightweight explorer, not a full file manager.
+The `Files` tab is a lightweight search-first browser, not a full file manager.
 
 ### V1 contents
 
@@ -281,14 +315,20 @@ It should show:
 - files
 - filter/search input
 - a client-side tree built from indexed workspace entries
+- a clear truncated-results state when the returned result set is partial
 
 ### V1 expectations
 
 It should support:
 
-- browsing
+- browsing within the indexed result set
 - filtering
 - opening files into the shared focused file surface
+
+It must not imply:
+
+- a guaranteed complete directory listing
+- reliable full-tree traversal without refining the search
 
 It does not need:
 
@@ -322,7 +362,7 @@ The surface should display:
 - file path
 - source context:
   - changed file
-  - explorer
+  - `Files`
   - chat link
 - relevant actions:
   - `Back to diffs` or equivalent return affordance
@@ -374,8 +414,9 @@ The save flow is:
 3. confirmation dialog appears
 4. on confirm:
    - write file to disk
+   - clear any stale workspace-entry index for that workspace on the server
    - reload file contents
-   - invalidate/refresh related diff state
+   - invalidate/refresh related diff and workspace queries
 5. editor remains on the file with updated content
 
 If save fails:
@@ -455,6 +496,7 @@ V1 should be covered by:
 - unit tests for:
   - edit eligibility rules
   - route-state parsing/serialization
+  - retain-search behavior
   - file-surface mode transitions
 - browser/component tests for:
   - opening a changed file into the focused surface
@@ -476,6 +518,7 @@ Explicitly out of scope for this sub-project:
 - a full code editor framework
 - terminal integration inside the editor
 - file creation/deletion/rename/move
+- a dedicated server-side file-tree/listing API
 - replacing external editor actions
 - provider health fixes
 - sidebar folder/color organization
