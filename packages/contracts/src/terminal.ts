@@ -139,6 +139,18 @@ const TerminalActivityEvent = Schema.Struct({
   hasRunningSubprocess: Schema.Boolean,
 });
 
+const TerminalCwdChangedEvent = Schema.Struct({
+  ...TerminalEventBaseSchema.fields,
+  type: Schema.Literal("cwdChanged"),
+  cwd: Schema.String.check(Schema.isNonEmpty()),
+});
+
+const TerminalSessionDetectedEvent = Schema.Struct({
+  ...TerminalEventBaseSchema.fields,
+  type: Schema.Literal("sessionDetected"),
+  sessionName: Schema.String.check(Schema.isNonEmpty()),
+});
+
 export const TerminalEvent = Schema.Union([
   TerminalStartedEvent,
   TerminalOutputEvent,
@@ -147,5 +159,7 @@ export const TerminalEvent = Schema.Union([
   TerminalClearedEvent,
   TerminalRestartedEvent,
   TerminalActivityEvent,
+  TerminalCwdChangedEvent,
+  TerminalSessionDetectedEvent,
 ]);
 export type TerminalEvent = typeof TerminalEvent.Type;

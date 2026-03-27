@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import path from "node:path";
@@ -470,6 +471,16 @@ function createTerminalSpawnEnv(
       spawnEnv[key] = value;
     }
   }
+  // Ensure TERM is always set so interactive CLI apps (claude, vim, etc.)
+  // know what escape sequences are supported. Bun's PTY doesn't set this
+  // automatically (unlike node-pty's `name` option).
+  if (!spawnEnv.TERM) {
+    spawnEnv.TERM = "xterm-256color";
+  }
+  // Advertise truecolor support so CLI tools can use the full 24-bit palette.
+  if (!spawnEnv.COLORTERM) {
+    spawnEnv.COLORTERM = "truecolor";
+  }
   return spawnEnv;
 }
 
@@ -563,6 +574,8 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
           unsubscribeExit: null,
           hasRunningSubprocess: false,
           runtimeEnv: normalizedRuntimeEnv(input.env),
+          lineBuffer: "",
+          detectedSessionName: null,
         };
         this.sessions.set(sessionKey, session);
         this.evictInactiveSessionsIfNeeded();
@@ -686,6 +699,8 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
           unsubscribeExit: null,
           hasRunningSubprocess: false,
           runtimeEnv: normalizedRuntimeEnv(input.env),
+          lineBuffer: "",
+          detectedSessionName: null,
         };
         this.sessions.set(sessionKey, session);
         this.evictInactiveSessionsIfNeeded();
@@ -891,6 +906,83 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
       createdAt: new Date().toISOString(),
       data,
     });
+
+    // Buffer output and scan for session patterns on complete lines
+    session.lineBuffer += data;
+    const lines = session.lineBuffer.split(/\r?\n/);
+    session.lineBuffer = lines.pop() ?? "";
+    for (const line of lines) {
+      this.scanLineForSessionName(session, line);
+    }
+  }
+
+  private scanLineForSessionName(session: TerminalSessionState, rawLine: string): void {
+    // Strip ANSI escape sequences for clean pattern matching
+    const line = rawLine.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "").trim();
+    if (line.length === 0) return;
+
+    let sessionName: string | null = null;
+
+    // Detect `claude --resume <name>`
+    const resumeMatch = line.match(/claude\s+--resume\s+(\S+)/);
+    if (resumeMatch?.[1]) {
+      sessionName = resumeMatch[1];
+    }
+
+    // Detect `/rename <name>` (Claude session rename command)
+    const renameMatch = line.match(/\/rename\s+(.+)/);
+    if (renameMatch?.[1]) {
+      const trimmed = renameMatch[1].trim();
+      if (trimmed.length > 0) {
+        sessionName = trimmed;
+      }
+    }
+
+    if (sessionName && sessionName !== session.detectedSessionName) {
+      session.detectedSessionName = sessionName;
+      this.emitEvent({
+        type: "sessionDetected",
+        threadId: session.threadId,
+        terminalId: session.terminalId,
+        createdAt: new Date().toISOString(),
+        sessionName,
+      });
+    }
+  }
+
+  private async resolvePtyCwd(pid: number): Promise<string | null> {
+    if (process.platform === "linux") {
+      try {
+        return await fs.promises.readlink(`/proc/${pid}/cwd`);
+      } catch {
+        return null;
+      }
+    }
+
+    if (process.platform === "darwin") {
+      return new Promise<string | null>((resolve) => {
+        execFile(
+          "lsof",
+          ["-a", "-p", String(pid), "-d", "cwd", "-Fn"],
+          { timeout: 2_000 },
+          (error, stdout) => {
+            if (error || !stdout) {
+              resolve(null);
+              return;
+            }
+            for (const line of stdout.split("\n")) {
+              if (line.startsWith("n/")) {
+                resolve(line.slice(1));
+                return;
+              }
+            }
+            resolve(null);
+          },
+        );
+      });
+    }
+
+    return null;
   }
 
   private onProcessExit(session: TerminalSessionState, event: PtyExitEvent): void {
@@ -1221,19 +1313,45 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
           if (!liveSession || liveSession.status !== "running" || liveSession.pid !== terminalPid) {
             return;
           }
-          if (liveSession.hasRunningSubprocess === hasRunningSubprocess) {
-            return;
+          if (liveSession.hasRunningSubprocess !== hasRunningSubprocess) {
+            liveSession.hasRunningSubprocess = hasRunningSubprocess;
+            liveSession.updatedAt = new Date().toISOString();
+            this.emitEvent({
+              type: "activity",
+              threadId: liveSession.threadId,
+              terminalId: liveSession.terminalId,
+              createdAt: new Date().toISOString(),
+              hasRunningSubprocess,
+            });
           }
 
-          liveSession.hasRunningSubprocess = hasRunningSubprocess;
-          liveSession.updatedAt = new Date().toISOString();
-          this.emitEvent({
-            type: "activity",
-            threadId: liveSession.threadId,
-            terminalId: liveSession.terminalId,
-            createdAt: new Date().toISOString(),
-            hasRunningSubprocess,
-          });
+          // Resolve actual CWD from the OS and emit if changed
+          try {
+            const resolvedCwd = await this.resolvePtyCwd(terminalPid);
+            if (
+              resolvedCwd &&
+              resolvedCwd !== liveSession.cwd &&
+              liveSession.status === "running" &&
+              liveSession.pid === terminalPid
+            ) {
+              liveSession.cwd = resolvedCwd;
+              liveSession.updatedAt = new Date().toISOString();
+              this.emitEvent({
+                type: "cwdChanged",
+                threadId: liveSession.threadId,
+                terminalId: liveSession.terminalId,
+                createdAt: new Date().toISOString(),
+                cwd: resolvedCwd,
+              });
+            }
+          } catch (cwdError) {
+            this.logger.warn("failed to resolve terminal CWD", {
+              threadId: liveSession.threadId,
+              terminalId: liveSession.terminalId,
+              terminalPid,
+              error: cwdError instanceof Error ? cwdError.message : String(cwdError),
+            });
+          }
         }),
       );
     } finally {
