@@ -1056,7 +1056,7 @@ export default function ThreadTerminalDrawer({
     onWidthChangeRef.current?.(clampedWidth);
   }, []);
 
-  const syncHeight = useCallback((nextHeight: number) => {
+  const _syncHeight = useCallback((nextHeight: number) => {
     const clampedHeight = clampDrawerHeight(nextHeight);
     if (lastSyncedHeightRef.current === clampedHeight) return;
     lastSyncedHeightRef.current = clampedHeight;

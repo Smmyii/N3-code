@@ -632,7 +632,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const checkpointDiffQuery = yield* CheckpointDiffQuery;
   const orchestrationReactor = yield* OrchestrationReactor;
   const { openInEditor } = yield* Open;
-  const skillRegistry = yield* SkillRegistry;
+  const _skillRegistry = yield* SkillRegistry;
 
   const subscriptionsScope = yield* Scope.make("sequential");
   yield* Effect.addFinalizer(() => Scope.close(subscriptionsScope, Exit.void));
@@ -741,7 +741,12 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const runPromise = Effect.runPromiseWith(runtimeServices);
 
   const unsubscribeTerminalEvents = yield* terminalManager.subscribe(
-    (event) => void Effect.runPromise(pushBus.publishAll(WS_CHANNELS.terminalEvent, event)),
+    (event) =>
+      void Effect.runPromise(pushBus.publishAll(WS_CHANNELS.terminalEvent, event)).catch(
+        (error) => {
+          logger.error("failed to broadcast terminal event", { error: String(error) });
+        },
+      ),
   );
   yield* Effect.addFinalizer(() => Effect.sync(() => unsubscribeTerminalEvents()));
   yield* readiness.markTerminalSubscriptionsReady;
@@ -1021,7 +1026,9 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   });
 
   httpServer.on("upgrade", (request, socket, head) => {
-    socket.on("error", () => {}); // Prevent unhandled `EPIPE`/`ECONNRESET` from crashing the process if the client disconnects mid-handshake
+    socket.on("error", (error) => {
+      logger.warn("socket error during WebSocket upgrade", { error: String(error) });
+    });
 
     if (authToken) {
       let providedToken: string | null = null;
@@ -1056,35 +1063,41 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     };
     // Send welcome before adding to broadcast set so publishAll calls
     // cannot reach this client before the welcome arrives.
-    void runPromise(
+    runPromise(
       readiness.awaitServerReady.pipe(
         Effect.flatMap(() => pushBus.publishClient(ws, WS_CHANNELS.serverWelcome, welcomeData)),
         Effect.flatMap((delivered) =>
           delivered ? Ref.update(clients, (clients) => clients.add(ws)) : Effect.void,
         ),
       ),
-    );
+    ).catch((error) => {
+      logger.error("failed to send welcome to client", { error: String(error) });
+    });
 
     ws.on("message", (raw) => {
       void runPromise(handleMessage(ws, raw).pipe(Effect.ignoreCause({ log: true })));
     });
 
     ws.on("close", () => {
-      void runPromise(
+      runPromise(
         Ref.update(clients, (clients) => {
           clients.delete(ws);
           return clients;
         }),
-      );
+      ).catch((error) => {
+        logger.error("failed to clean up client on close", { error: String(error) });
+      });
     });
 
     ws.on("error", () => {
-      void runPromise(
+      runPromise(
         Ref.update(clients, (clients) => {
           clients.delete(ws);
           return clients;
         }),
-      );
+      ).catch((error) => {
+        logger.error("failed to clean up client on error", { error: String(error) });
+      });
     });
   });
 

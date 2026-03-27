@@ -8,7 +8,6 @@
  */
 import { Config, Data, Effect, FileSystem, Layer, Option, Path, Schema, ServiceMap } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import { NetService } from "@t3tools/shared/Net";
 import {
   DEFAULT_PORT,

@@ -198,8 +198,12 @@ function ChatThreadRouteView() {
   useEffect(() => {
     if (diffOpen) {
       setHasOpenedDiff(true);
+    } else {
+      // Reset when switching threads so the diff panel isn't kept mounted
+      // unnecessarily for a thread that never opened it.
+      setHasOpenedDiff(false);
     }
-  }, [diffOpen]);
+  }, [diffOpen, threadId]);
 
   useEffect(() => {
     if (!threadsHydrated) {

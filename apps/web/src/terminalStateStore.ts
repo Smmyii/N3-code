@@ -635,11 +635,16 @@ export const useTerminalStateStore = create<TerminalStateStoreState>()(
             terminalStateByThreadId?: Record<string, ThreadTerminalState>;
           };
           if (state.terminalStateByThreadId) {
-            for (const threadState of Object.values(state.terminalStateByThreadId)) {
-              if (!threadState.startupCommandByTerminalId) {
-                threadState.startupCommandByTerminalId = {};
-              }
+            const migrated: Record<string, ThreadTerminalState> = {};
+            for (const [key, threadState] of Object.entries(state.terminalStateByThreadId)) {
+              migrated[key] = threadState.startupCommandByTerminalId
+                ? threadState
+                : { ...threadState, startupCommandByTerminalId: {} };
             }
+            return {
+              ...state,
+              terminalStateByThreadId: migrated,
+            } as TerminalStateStoreState;
           }
         }
         return persistedState as TerminalStateStoreState;

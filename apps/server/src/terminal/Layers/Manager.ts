@@ -847,10 +847,26 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
       session.status = "running";
       session.updatedAt = new Date().toISOString();
       session.unsubscribeData = ptyProcess.onData((data) => {
-        this.onProcessData(session, data);
+        try {
+          this.onProcessData(session, data);
+        } catch (error) {
+          this.logger.error("unhandled error in terminal onData handler", {
+            threadId: session.threadId,
+            terminalId: session.terminalId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
       });
       session.unsubscribeExit = ptyProcess.onExit((event) => {
-        this.onProcessExit(session, event);
+        try {
+          this.onProcessExit(session, event);
+        } catch (error) {
+          this.logger.error("unhandled error in terminal onExit handler", {
+            threadId: session.threadId,
+            terminalId: session.terminalId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
       });
       this.updateSubprocessPollingState();
       this.emitEvent({
@@ -918,6 +934,7 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
 
   private scanLineForSessionName(session: TerminalSessionState, rawLine: string): void {
     // Strip ANSI escape sequences for clean pattern matching
+    // eslint-disable-next-line no-control-regex
     const line = rawLine.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "").trim();
     if (line.length === 0) return;
 

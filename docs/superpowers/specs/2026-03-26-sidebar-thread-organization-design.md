@@ -123,18 +123,9 @@ Why:
 ### Suggested types
 
 ```ts
-type SidebarColor =
-  | "slate"
-  | "blue"
-  | "teal"
-  | "emerald"
-  | "amber"
-  | "rose"
-  | "violet";
+type SidebarColor = "slate" | "blue" | "teal" | "emerald" | "amber" | "rose" | "violet";
 
-type SidebarNodeRef =
-  | { kind: "folder"; id: string }
-  | { kind: "thread"; id: ThreadId };
+type SidebarNodeRef = { kind: "folder"; id: string } | { kind: "thread"; id: ThreadId };
 
 type SidebarThreadColorMode = "inherit" | "custom" | "none";
 
