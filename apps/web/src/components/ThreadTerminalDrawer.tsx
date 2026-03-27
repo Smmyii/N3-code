@@ -10,7 +10,8 @@ import {
 } from "lucide-react";
 import { type ThreadId } from "@t3tools/contracts";
 import { Terminal, type ITheme } from "@xterm/xterm";
-import ContextViewerPanel from "./ContextViewerPanel";
+// TODO: re-enable when file editor feature lands (feat/file-editor branch)
+// import ContextViewerPanel from "./ContextViewerPanel";
 import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
@@ -1189,7 +1190,9 @@ export default function ThreadTerminalDrawer({
       </div>
 
       {panelTab === "context" ? (
-        <ContextViewerPanel cwd={cwd} />
+        <div className="flex flex-1 items-center justify-center text-xs text-muted-foreground/60">
+          Context viewer coming soon
+        </div>
       ) : (
         <>
           {!hasTerminalSidebar && (
