@@ -1,28 +1,25 @@
-# T3 Code
+# N3 Code
 
-T3 Code is a minimal web GUI for coding agents (currently Codex and Claude, more coming soon).
+A customized fork of [T3 Code](https://github.com/pingdotgg/t3code) — a minimal web GUI for coding agents.
 
-## How to use
+## What's different
 
-> [!WARNING]
-> You need to have [Codex CLI](https://github.com/openai/codex) installed and authorized for T3 Code to work.
+- Sidebar thread organization (folders, subfolders, color accents)
+- Diff workspace with file/changes tab views
+- Improved terminal drawer with resizable panels
+- Skills discovery from Claude plugins cache
+- In-progress: focused file editor, context viewer
+
+## Setup
 
 ```bash
-npx t3
+bun install
+bun run dev
 ```
 
-You can also just install the desktop app. It's cooler.
+## Upstream sync
 
-Install the [desktop app from the Releases page](https://github.com/pingdotgg/t3code/releases)
-
-## Some notes
-
-We are very very early in this project. Expect bugs.
-
-We are not accepting contributions yet.
-
-## If you REALLY want to contribute still.... read this first
-
-Read [CONTRIBUTING.md](./CONTRIBUTING.md) before opening an issue or PR.
-
-Need support? Join the [Discord](https://discord.gg/jn4EGJjrvv).
+```bash
+git fetch upstream
+git merge upstream/main
+```
