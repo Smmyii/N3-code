@@ -197,7 +197,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       yield* fs.writeFileString(
         keybindingsConfigPath,
         JSON.stringify([
-          { key: "mod+j", command: "terminal.toggle" },
+          { key: "alt+j", command: "terminal.toggle" },
           { key: "mod+shift+d+o", command: "terminal.new" },
           { key: "mod+x", command: "invalid.command" },
         ]),
@@ -299,7 +299,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
     Effect.gen(function* () {
       const { keybindingsConfigPath } = yield* ServerConfig;
       yield* writeKeybindingsConfig(keybindingsConfigPath, [
-        { key: "mod+j", command: "terminal.toggle" },
+        { key: "alt+j", command: "terminal.toggle" },
       ]);
 
       const resolved = yield* Effect.gen(function* () {
@@ -314,7 +314,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       const persistedView = persisted.map(({ key, command }) => ({ key, command }));
 
       assert.deepEqual(persistedView, [
-        { key: "mod+j", command: "terminal.toggle" },
+        { key: "alt+j", command: "terminal.toggle" },
         { key: "mod+shift+r", command: "script.run-tests.run" },
       ]);
       assert.isTrue(resolved.some((entry) => entry.command === "script.run-tests.run"));
@@ -396,7 +396,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       const { keybindingsConfigPath } = yield* ServerConfig;
       const { dirname } = yield* Path.Path;
       yield* writeKeybindingsConfig(keybindingsConfigPath, [
-        { key: "mod+j", command: "terminal.toggle" },
+        { key: "alt+j", command: "terminal.toggle" },
       ]);
       yield* fs.chmod(dirname(keybindingsConfigPath), 0o500);
 
@@ -413,7 +413,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
 
       const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
       const persistedView = persisted.map(({ key, command }) => ({ key, command }));
-      assert.deepEqual(persistedView, [{ key: "mod+j", command: "terminal.toggle" }]);
+      assert.deepEqual(persistedView, [{ key: "alt+j", command: "terminal.toggle" }]);
     }).pipe(Effect.provide(makeKeybindingsLayer())),
   );
 
@@ -421,7 +421,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
     Effect.gen(function* () {
       const { keybindingsConfigPath } = yield* ServerConfig;
       yield* writeKeybindingsConfig(keybindingsConfigPath, [
-        { key: "mod+j", command: "terminal.toggle" },
+        { key: "alt+j", command: "terminal.toggle" },
       ]);
 
       const [first, second] = yield* Effect.gen(function* () {
@@ -440,7 +440,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
     Effect.gen(function* () {
       const { keybindingsConfigPath } = yield* ServerConfig;
       yield* writeKeybindingsConfig(keybindingsConfigPath, [
-        { key: "mod+j", command: "terminal.toggle" },
+        { key: "alt+j", command: "terminal.toggle" },
       ]);
 
       const loadedAfterUpsert = yield* Effect.gen(function* () {

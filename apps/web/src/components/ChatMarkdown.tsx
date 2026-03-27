@@ -1,5 +1,5 @@
 import { DiffsHighlighter, getSharedHighlighter, SupportedLanguages } from "@pierre/diffs";
-import { CheckIcon, CopyIcon } from "lucide-react";
+import { CheckIcon, CopyIcon, PanelRightOpenIcon } from "lucide-react";
 import React, {
   Children,
   Suspense,
@@ -23,6 +23,7 @@ import { LRUCache } from "../lib/lruCache";
 import { useTheme } from "../hooks/useTheme";
 import { resolveMarkdownFileLinkTarget } from "../markdown-links";
 import { readNativeApi } from "../nativeApi";
+import { Button } from "./ui/button";
 
 class CodeHighlightErrorBoundary extends React.Component<
   { fallback: ReactNode; children: ReactNode },
@@ -49,6 +50,7 @@ interface ChatMarkdownProps {
   text: string;
   cwd: string | undefined;
   isStreaming?: boolean;
+  onOpenWorkspaceFile?: ((absolutePath: string) => void) | undefined;
 }
 
 const CODE_FENCE_LANGUAGE_REGEX = /(?:^|\s)language-([^\s]+)/;
@@ -235,32 +237,51 @@ function SuspenseShikiCodeBlock({
   );
 }
 
-function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
+function ChatMarkdown({ text, cwd, isStreaming = false, onOpenWorkspaceFile }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
   const markdownComponents = useMemo<Components>(
     () => ({
-      a({ node: _node, href, ...props }) {
+      a({ node: _node, href, children, ...props }) {
         const targetPath = resolveMarkdownFileLinkTarget(href, cwd);
         if (!targetPath) {
           return <a {...props} href={href} target="_blank" rel="noreferrer" />;
         }
 
         return (
-          <a
-            {...props}
-            href={href}
-            onClick={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              const api = readNativeApi();
-              if (api) {
-                void openInPreferredEditor(api, targetPath);
-              } else {
-                console.warn("Native API not found. Unable to open file in editor.");
-              }
-            }}
-          />
+          <span className="inline-flex items-center gap-1">
+            <a
+              {...props}
+              href={href}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                const api = readNativeApi();
+                if (api) {
+                  void openInPreferredEditor(api, targetPath);
+                } else {
+                  console.warn("Native API not found. Unable to open file in editor.");
+                }
+              }}
+            >
+              {children}
+            </a>
+            {onOpenWorkspaceFile ? (
+              <Button
+                type="button"
+                size="icon-xs"
+                variant="ghost"
+                aria-label={`Open ${nodeToPlainText(children)} in app`}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onOpenWorkspaceFile(targetPath);
+                }}
+              >
+                <PanelRightOpenIcon className="size-3" />
+              </Button>
+            ) : null}
+          </span>
         );
       },
       pre({ node: _node, children, ...props }) {
@@ -285,7 +306,7 @@ function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
         );
       },
     }),
-    [cwd, diffThemeName, isStreaming],
+    [cwd, diffThemeName, isStreaming, onOpenWorkspaceFile],
   );
 
   return (

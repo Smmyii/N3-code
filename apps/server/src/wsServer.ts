@@ -51,7 +51,7 @@ import { GitManager } from "./git/Services/GitManager.ts";
 import { TerminalManager } from "./terminal/Services/Manager.ts";
 import { Keybindings } from "./keybindings";
 import { ServerSettingsService } from "./serverSettings";
-import { searchWorkspaceEntries } from "./workspaceEntries";
+import { clearWorkspaceIndexCache, searchWorkspaceEntries } from "./workspaceEntries";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
 import { OrchestrationReactor } from "./orchestration/Services/OrchestrationReactor";
@@ -824,7 +824,22 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
               }),
           ),
         );
+        clearWorkspaceIndexCache(body.cwd);
         return { relativePath: target.relativePath };
+      }
+
+      case WS_METHODS.projectsReadFile: {
+        const body = stripRequestTag(request.body);
+        const target = yield* resolveWorkspaceWritePath({
+          workspaceRoot: body.cwd,
+          relativePath: body.relativePath,
+          path,
+        });
+        const contents = yield* fileSystem.readFileString(target.absolutePath).pipe(
+          Effect.map((text) => ({ contents: text, exists: true as const })),
+          Effect.catch(() => Effect.succeed({ contents: "", exists: false as const })),
+        );
+        return contents;
       }
 
       case WS_METHODS.shellOpenInEditor: {
@@ -1076,44 +1091,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   return httpServer;
 });
 
-export const ServerLive = Layer.effect(
-  Server,
-  Effect.gen(function* () {
-    const serverConfig = yield* ServerConfig;
-    const gitManager = yield* GitManager;
-    const terminalManager = yield* TerminalManager;
-    const keybindingsManager = yield* Keybindings;
-    const providerHealth = yield* ProviderHealth;
-    const providerService = yield* ProviderService;
-    const git = yield* GitCore;
-    const orchestrationEngine = yield* OrchestrationEngineService;
-    const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
-    const checkpointDiffQuery = yield* CheckpointDiffQuery;
-    const orchestrationReactor = yield* OrchestrationReactor;
-    const open = yield* Open;
-    const skillRegistry = yield* SkillRegistry;
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-
-    return {
-      start: createServer().pipe(
-        Effect.provideService(ServerConfig, serverConfig),
-        Effect.provideService(GitManager, gitManager),
-        Effect.provideService(TerminalManager, terminalManager),
-        Effect.provideService(Keybindings, keybindingsManager),
-        Effect.provideService(ProviderHealth, providerHealth),
-        Effect.provideService(ProviderService, providerService),
-        Effect.provideService(GitCore, git),
-        Effect.provideService(OrchestrationEngineService, orchestrationEngine),
-        Effect.provideService(ProjectionSnapshotQuery, projectionSnapshotQuery),
-        Effect.provideService(CheckpointDiffQuery, checkpointDiffQuery),
-        Effect.provideService(OrchestrationReactor, orchestrationReactor),
-        Effect.provideService(Open, open),
-        Effect.provideService(SkillRegistry, skillRegistry),
-        Effect.provideService(FileSystem.FileSystem, fileSystem),
-        Effect.provideService(Path.Path, path),
-      ),
-      stopSignal: Effect.never,
-    } satisfies ServerShape;
-  }),
-);
+export const ServerLive = Layer.succeed(Server, {
+  start: createServer(),
+  stopSignal: Effect.never,
+} satisfies ServerShape);

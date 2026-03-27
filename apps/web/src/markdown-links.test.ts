@@ -33,6 +33,12 @@ describe("resolveMarkdownFileLinkTarget", () => {
     );
   });
 
+  it("preserves workspace file links with line suffixes for in-app routing", () => {
+    expect(resolveMarkdownFileLinkTarget("docs/plan.md#L12", "/repo/project")).toBe(
+      "/repo/project/docs/plan.md:12",
+    );
+  });
+
   it("ignores external urls", () => {
     expect(resolveMarkdownFileLinkTarget("https://example.com/docs")).toBeNull();
   });

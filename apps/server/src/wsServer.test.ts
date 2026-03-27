@@ -950,7 +950,7 @@ describe("WebSocket Server", () => {
     fs.writeFileSync(
       keybindingsPath,
       JSON.stringify([
-        { key: "mod+j", command: "terminal.toggle" },
+        { key: "alt+j", command: "terminal.toggle" },
         { key: "mod+shift+d+o", command: "terminal.new" },
         { key: "mod+x", command: "not-a-real-command" },
       ]),
@@ -1101,7 +1101,7 @@ describe("WebSocket Server", () => {
     ensureParentDir(keybindingsPath);
     fs.writeFileSync(
       keybindingsPath,
-      JSON.stringify([{ key: "mod+j", command: "terminal.toggle" }]),
+      JSON.stringify([{ key: "alt+j", command: "terminal.toggle" }]),
       "utf8",
     );
 
@@ -1636,6 +1636,38 @@ describe("WebSocket Server", () => {
       entries: expect.arrayContaining([
         expect.objectContaining({ path: "src/components", kind: "directory" }),
         expect.objectContaining({ path: "src/components/Composer.tsx", kind: "file" }),
+      ]),
+      truncated: false,
+    });
+  });
+
+  it("supports projects.searchEntries with an empty explorer query", async () => {
+    const workspace = makeTempDir("t3code-ws-explorer-");
+    fs.mkdirSync(path.join(workspace, "docs"), { recursive: true });
+    fs.writeFileSync(path.join(workspace, "docs", "plan.md"), "# plan", "utf8");
+    fs.writeFileSync(path.join(workspace, ".env"), "FOO=bar\n", "utf8");
+    fs.mkdirSync(path.join(workspace, ".git"), { recursive: true });
+    fs.writeFileSync(path.join(workspace, ".git", "HEAD"), "ref: refs/heads/main\n", "utf8");
+
+    server = await createTestServer({ cwd: "/test" });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const [ws] = await connectAndAwaitWelcome(port);
+    connections.push(ws);
+
+    const response = await sendRequest(ws, WS_METHODS.projectsSearchEntries, {
+      cwd: workspace,
+      query: "",
+      limit: 2000,
+    });
+
+    expect(response.error).toBeUndefined();
+    expect(response.result).toEqual({
+      entries: expect.arrayContaining([
+        expect.objectContaining({ path: "docs", kind: "directory" }),
+        expect.objectContaining({ path: "docs/plan.md", kind: "file" }),
+        expect.objectContaining({ path: ".env", kind: "file" }),
       ]),
       truncated: false,
     });

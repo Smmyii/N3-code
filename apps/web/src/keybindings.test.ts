@@ -75,20 +75,32 @@ function compile(bindings: TestBinding[]): ResolvedKeybindingsConfig {
   }));
 }
 
+function altShortcut(key: string, overrides?: Partial<KeybindingShortcut>): KeybindingShortcut {
+  return {
+    key,
+    metaKey: false,
+    ctrlKey: false,
+    shiftKey: false,
+    altKey: true,
+    modKey: false,
+    ...overrides,
+  };
+}
+
 const DEFAULT_BINDINGS = compile([
-  { shortcut: modShortcut("j"), command: "terminal.toggle" },
+  { shortcut: altShortcut("j"), command: "terminal.toggle" },
   {
-    shortcut: modShortcut("d"),
+    shortcut: altShortcut("d"),
     command: "terminal.split",
     whenAst: whenIdentifier("terminalFocus"),
   },
   {
-    shortcut: modShortcut("d", { shiftKey: true }),
+    shortcut: altShortcut("n"),
     command: "terminal.new",
     whenAst: whenIdentifier("terminalFocus"),
   },
   {
-    shortcut: modShortcut("w"),
+    shortcut: altShortcut("w"),
     command: "terminal.close",
     whenAst: whenIdentifier("terminalFocus"),
   },
@@ -103,17 +115,17 @@ const DEFAULT_BINDINGS = compile([
 ]);
 
 describe("isTerminalToggleShortcut", () => {
-  it("matches Cmd+J on macOS", () => {
+  it("matches Alt+J on macOS", () => {
     assert.isTrue(
-      isTerminalToggleShortcut(event({ metaKey: true }), DEFAULT_BINDINGS, {
+      isTerminalToggleShortcut(event({ altKey: true }), DEFAULT_BINDINGS, {
         platform: "MacIntel",
       }),
     );
   });
 
-  it("matches Ctrl+J on non-macOS", () => {
+  it("matches Alt+J on non-macOS", () => {
     assert.isTrue(
-      isTerminalToggleShortcut(event({ ctrlKey: true }), DEFAULT_BINDINGS, { platform: "Win32" }),
+      isTerminalToggleShortcut(event({ altKey: true }), DEFAULT_BINDINGS, { platform: "Win32" }),
     );
   });
 });
@@ -121,19 +133,19 @@ describe("isTerminalToggleShortcut", () => {
 describe("split/new/close terminal shortcuts", () => {
   it("requires terminalFocus for default split/new/close bindings", () => {
     assert.isFalse(
-      isTerminalSplitShortcut(event({ key: "d", metaKey: true }), DEFAULT_BINDINGS, {
+      isTerminalSplitShortcut(event({ key: "d", altKey: true }), DEFAULT_BINDINGS, {
         platform: "MacIntel",
         context: { terminalFocus: false },
       }),
     );
     assert.isFalse(
-      isTerminalNewShortcut(event({ key: "d", ctrlKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+      isTerminalNewShortcut(event({ key: "n", altKey: true }), DEFAULT_BINDINGS, {
         platform: "Linux",
         context: { terminalFocus: false },
       }),
     );
     assert.isFalse(
-      isTerminalCloseShortcut(event({ key: "w", ctrlKey: true }), DEFAULT_BINDINGS, {
+      isTerminalCloseShortcut(event({ key: "w", altKey: true }), DEFAULT_BINDINGS, {
         platform: "Linux",
         context: { terminalFocus: false },
       }),
@@ -142,19 +154,19 @@ describe("split/new/close terminal shortcuts", () => {
 
   it("matches split/new when terminalFocus is true", () => {
     assert.isTrue(
-      isTerminalSplitShortcut(event({ key: "d", metaKey: true }), DEFAULT_BINDINGS, {
+      isTerminalSplitShortcut(event({ key: "d", altKey: true }), DEFAULT_BINDINGS, {
         platform: "MacIntel",
         context: { terminalFocus: true },
       }),
     );
     assert.isTrue(
-      isTerminalNewShortcut(event({ key: "d", ctrlKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+      isTerminalNewShortcut(event({ key: "n", altKey: true }), DEFAULT_BINDINGS, {
         platform: "Linux",
         context: { terminalFocus: true },
       }),
     );
     assert.isTrue(
-      isTerminalCloseShortcut(event({ key: "w", ctrlKey: true }), DEFAULT_BINDINGS, {
+      isTerminalCloseShortcut(event({ key: "w", altKey: true }), DEFAULT_BINDINGS, {
         platform: "Linux",
         context: { terminalFocus: true },
       }),

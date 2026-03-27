@@ -402,6 +402,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const storeSetTerminalOpen = useTerminalStateStore((s) => s.setTerminalOpen);
   const storeSetTerminalHeight = useTerminalStateStore((s) => s.setTerminalHeight);
+  const storeSetTerminalWidth = useTerminalStateStore((s) => s.setTerminalWidth);
+  const storeSetTerminalCwd = useTerminalStateStore((s) => s.setTerminalCwd);
+  const storeSetTerminalStartupCommand = useTerminalStateStore((s) => s.setTerminalStartupCommand);
   const storeSplitTerminal = useTerminalStateStore((s) => s.splitTerminal);
   const storeNewTerminal = useTerminalStateStore((s) => s.newTerminal);
   const storeSetActiveTerminal = useTerminalStateStore((s) => s.setActiveTerminal);
@@ -1466,10 +1469,68 @@ export default function ChatView({ threadId }: ChatViewProps) {
     },
     [activeThreadId, storeSetTerminalHeight],
   );
+  const setTerminalWidth = useCallback(
+    (width: number) => {
+      if (!activeThreadId) return;
+      storeSetTerminalWidth(activeThreadId, width);
+    },
+    [activeThreadId, storeSetTerminalWidth],
+  );
+  const setTerminalCwd = useCallback(
+    (terminalId: string, terminalCwd: string) => {
+      if (!activeThreadId) return;
+      storeSetTerminalCwd(activeThreadId, terminalId, terminalCwd);
+    },
+    [activeThreadId, storeSetTerminalCwd],
+  );
+  const setTerminalStartupCommand = useCallback(
+    (terminalId: string, command: string) => {
+      if (!activeThreadId) return;
+      storeSetTerminalStartupCommand(activeThreadId, terminalId, command);
+    },
+    [activeThreadId, storeSetTerminalStartupCommand],
+  );
+  // Persist a local draft thread to the server so it appears in the sidebar
+  // even without sending a chat message (e.g. when opening a terminal-only workspace).
+  const ensureServerThread = useCallback(async () => {
+    if (!isLocalDraftThread || !activeThread || !activeProject) return;
+    const api = readNativeApi();
+    if (!api) return;
+    const threadModel: ModelSlug =
+      selectedModel || (activeProject.model as ModelSlug) || DEFAULT_MODEL_BY_PROVIDER.codex;
+    try {
+      await api.orchestration.dispatchCommand({
+        type: "thread.create",
+        commandId: newCommandId(),
+        threadId: activeThread.id,
+        projectId: activeProject.id,
+        title: truncateTitle("Terminal workspace"),
+        model: threadModel,
+        runtimeMode,
+        interactionMode,
+        branch: activeThread.branch,
+        worktreePath: activeThread.worktreePath,
+        createdAt: activeThread.createdAt,
+      });
+    } catch {
+      // Thread may already exist on the server — ignore
+    }
+  }, [
+    isLocalDraftThread,
+    activeThread,
+    activeProject,
+    selectedModel,
+    runtimeMode,
+    interactionMode,
+  ]);
+
   const toggleTerminalVisibility = useCallback(() => {
     if (!activeThreadId) return;
+    if (!terminalState.terminalOpen) {
+      void ensureServerThread();
+    }
     setTerminalOpen(!terminalState.terminalOpen);
-  }, [activeThreadId, setTerminalOpen, terminalState.terminalOpen]);
+  }, [activeThreadId, setTerminalOpen, terminalState.terminalOpen, ensureServerThread]);
   const splitTerminal = useCallback(() => {
     if (!activeThreadId || hasReachedSplitLimit) return;
     const terminalId = `terminal-${randomUUID()}`;
@@ -2356,6 +2417,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         event.preventDefault();
         event.stopPropagation();
         if (!terminalState.terminalOpen) {
+          void ensureServerThread();
           setTerminalOpen(true);
         }
         splitTerminal();
@@ -2374,6 +2436,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         event.preventDefault();
         event.stopPropagation();
         if (!terminalState.terminalOpen) {
+          void ensureServerThread();
           setTerminalOpen(true);
         }
         createNewTerminal();
@@ -2404,6 +2467,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     activeThreadId,
     closeTerminal,
     createNewTerminal,
+    ensureServerThread,
     setTerminalOpen,
     runProjectScript,
     splitTerminal,
@@ -3683,6 +3747,25 @@ export default function ChatView({ threadId }: ChatViewProps) {
     },
     [navigate, threadId],
   );
+  const onOpenWorkspaceFile = useCallback(
+    (absolutePath: string) => {
+      void navigate({
+        to: "/$threadId",
+        params: { threadId },
+        search: (previous) => {
+          const rest = stripDiffSearchParams(previous);
+          return {
+            ...rest,
+            diff: "1",
+            diffTab: "editor",
+            diffFilePath: absolutePath,
+            diffFileMode: "preview",
+          };
+        },
+      });
+    },
+    [navigate, threadId],
+  );
   const onRevertUserMessage = (messageId: MessageId) => {
     const targetTurnCount = revertTurnCountByUserMessageId.get(messageId);
     if (typeof targetTurnCount !== "number") {
@@ -3804,7 +3887,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 markdownCwd={gitCwd ?? undefined}
                 resolvedTheme={resolvedTheme}
                 timestampFormat={timestampFormat}
-                workspaceRoot={activeProject?.cwd ?? undefined}
+                workspaceRoot={gitCwd ?? undefined}
+                onOpenWorkspaceFile={onOpenWorkspaceFile}
               />
             </div>
 
@@ -4385,37 +4469,45 @@ export default function ChatView({ threadId }: ChatViewProps) {
             }}
           />
         ) : null}
+
+        {/* Terminal side panel */}
+        {(() => {
+          if (!terminalState.terminalOpen || !activeProject) {
+            return null;
+          }
+          return (
+            <ThreadTerminalDrawer
+              key={activeThread.id}
+              threadId={activeThread.id}
+              cwd={gitCwd ?? activeProject.cwd}
+              cwdByTerminalId={terminalState.cwdByTerminalId}
+              startupCommandByTerminalId={terminalState.startupCommandByTerminalId}
+              runtimeEnv={threadTerminalRuntimeEnv}
+              height={terminalState.terminalHeight}
+              width={terminalState.terminalWidth}
+              terminalIds={terminalState.terminalIds}
+              activeTerminalId={terminalState.activeTerminalId}
+              terminalGroups={terminalState.terminalGroups}
+              activeTerminalGroupId={terminalState.activeTerminalGroupId}
+              focusRequestId={terminalFocusRequestId}
+              onSplitTerminal={splitTerminal}
+              onNewTerminal={createNewTerminal}
+              splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
+              newShortcutLabel={newTerminalShortcutLabel ?? undefined}
+              closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
+              onActiveTerminalChange={activateTerminal}
+              onCloseTerminal={closeTerminal}
+              onHeightChange={setTerminalHeight}
+              onWidthChange={setTerminalWidth}
+              onCwdChange={setTerminalCwd}
+              onStartupCommandDetected={setTerminalStartupCommand}
+              onStartupCommandChange={setTerminalStartupCommand}
+              onAddTerminalContext={addTerminalContextToDraft}
+            />
+          );
+        })()}
       </div>
       {/* end horizontal flex container */}
-
-      {(() => {
-        if (!terminalState.terminalOpen || !activeProject) {
-          return null;
-        }
-        return (
-          <ThreadTerminalDrawer
-            key={activeThread.id}
-            threadId={activeThread.id}
-            cwd={gitCwd ?? activeProject.cwd}
-            runtimeEnv={threadTerminalRuntimeEnv}
-            height={terminalState.terminalHeight}
-            terminalIds={terminalState.terminalIds}
-            activeTerminalId={terminalState.activeTerminalId}
-            terminalGroups={terminalState.terminalGroups}
-            activeTerminalGroupId={terminalState.activeTerminalGroupId}
-            focusRequestId={terminalFocusRequestId}
-            onSplitTerminal={splitTerminal}
-            onNewTerminal={createNewTerminal}
-            splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
-            newShortcutLabel={newTerminalShortcutLabel ?? undefined}
-            closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
-            onActiveTerminalChange={activateTerminal}
-            onCloseTerminal={closeTerminal}
-            onHeightChange={setTerminalHeight}
-            onAddTerminalContext={addTerminalContextToDraft}
-          />
-        );
-      })()}
 
       {expandedImage && expandedImageItem && (
         <div

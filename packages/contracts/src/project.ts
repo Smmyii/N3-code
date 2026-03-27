@@ -1,12 +1,12 @@
 import { Schema } from "effect";
-import { PositiveInt, TrimmedNonEmptyString } from "./baseSchemas";
+import { PositiveInt, TrimmedNonEmptyString, TrimmedString } from "./baseSchemas";
 
-const PROJECT_SEARCH_ENTRIES_MAX_LIMIT = 200;
+const PROJECT_SEARCH_ENTRIES_MAX_LIMIT = 2000;
 const PROJECT_WRITE_FILE_PATH_MAX_LENGTH = 512;
 
 export const ProjectSearchEntriesInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
-  query: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+  query: TrimmedString.check(Schema.isMaxLength(256)),
   limit: PositiveInt.check(Schema.isLessThanOrEqualTo(PROJECT_SEARCH_ENTRIES_MAX_LIMIT)),
 });
 export type ProjectSearchEntriesInput = typeof ProjectSearchEntriesInput.Type;
@@ -37,3 +37,17 @@ export const ProjectWriteFileResult = Schema.Struct({
   relativePath: TrimmedNonEmptyString,
 });
 export type ProjectWriteFileResult = typeof ProjectWriteFileResult.Type;
+
+const PROJECT_READ_FILE_PATH_MAX_LENGTH = 512;
+
+export const ProjectReadFileInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  relativePath: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_READ_FILE_PATH_MAX_LENGTH)),
+});
+export type ProjectReadFileInput = typeof ProjectReadFileInput.Type;
+
+export const ProjectReadFileResult = Schema.Struct({
+  contents: Schema.String,
+  exists: Schema.Boolean,
+});
+export type ProjectReadFileResult = typeof ProjectReadFileResult.Type;

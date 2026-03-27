@@ -55,6 +55,7 @@ import {
   compatibleProvidersFor,
   computeDirectoryManifestHash,
   discoverInstalledSkillEntries,
+  discoverPluginSkillEntries,
   fileExists,
   getSourceHost,
   installDirectoryFor,
@@ -587,6 +588,48 @@ export const SkillRegistryLive = Layer.effect(
             );
           }
         }
+      }
+
+      // Discover skills from Claude plugins cache (~/.claude/plugins/cache/)
+      const seenSlugs = new Set(items.map((item) => item.slug));
+      try {
+        const pluginEntries = await discoverPluginSkillEntries();
+        for (const entry of pluginEntries) {
+          if (seenSlugs.has(entry.slug)) continue; // skip duplicates
+          try {
+            const markdown = await readFile(entry.markdownPath, "utf8");
+            const metadata = deriveInstalledItemMetadata({
+              kind: entry.kind,
+              slug: entry.slug,
+              markdown,
+              fallbackInstallPath: entry.installPath,
+            });
+            items.push({
+              ...buildInstalledItem({
+                provider: entry.provider,
+                kind: entry.kind,
+                scope: entry.scope,
+                installPath: entry.installPath,
+                markdown,
+                provenance: null,
+              }),
+              ...metadata,
+            });
+            seenSlugs.add(entry.slug);
+          } catch (error) {
+            warnings.push(
+              `Failed to parse plugin skill at ${entry.installPath}: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            );
+          }
+        }
+      } catch (error) {
+        warnings.push(
+          `Failed to discover plugin skills: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
       }
 
       return { items, warnings };

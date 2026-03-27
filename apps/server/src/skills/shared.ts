@@ -403,6 +403,58 @@ export async function discoverInstalledSkillEntries(params: {
   return results;
 }
 
+/**
+ * Discover skills installed via the Claude plugins system (e.g. superpowers,
+ * frontend-design).  These live under ~/.claude/plugins/cache/ and are tracked
+ * by ~/.claude/plugins/installed_plugins.json.
+ */
+export async function discoverPluginSkillEntries(): Promise<DiscoveredInstalledSkillEntry[]> {
+  const pluginsJsonPath = path.join(os.homedir(), ".claude", "plugins", "installed_plugins.json");
+  type InstalledPluginsFile = {
+    plugins: Record<string, Array<{ installPath: string }>>;
+  };
+  const pluginsData = await readJsonFile<InstalledPluginsFile>(pluginsJsonPath);
+  if (!pluginsData?.plugins) {
+    return [];
+  }
+
+  const results: DiscoveredInstalledSkillEntry[] = [];
+
+  for (const entries of Object.values(pluginsData.plugins)) {
+    // Use the first (active) entry for each plugin
+    const entry = entries[0];
+    if (!entry?.installPath) continue;
+
+    const skillsRoot = path.join(entry.installPath, "skills");
+    if (!(await fileExists(skillsRoot))) continue;
+
+    let skillDirs: import("node:fs").Dirent[];
+    try {
+      skillDirs = await readdir(skillsRoot, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const skillDir of skillDirs) {
+      if (!skillDir.isDirectory() || skillDir.name.startsWith(".")) continue;
+      const skillPath = path.join(skillsRoot, skillDir.name);
+      const markdownPath = path.join(skillPath, SKILL_MD);
+      if (!(await fileExists(markdownPath))) continue;
+      results.push({
+        installPath: skillPath,
+        entryType: "directory",
+        provider: "claudeAgent",
+        kind: "skill",
+        scope: "global",
+        markdownPath,
+        slug: skillDir.name,
+      });
+    }
+  }
+
+  return results;
+}
+
 export function getSourceHost(sourceUrl?: string): string | undefined {
   if (!sourceUrl) return undefined;
   try {

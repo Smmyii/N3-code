@@ -158,6 +158,7 @@ export function createWsNativeApi(): NativeApi {
     projects: {
       searchEntries: (input) => transport.request(WS_METHODS.projectsSearchEntries, input),
       writeFile: (input) => transport.request(WS_METHODS.projectsWriteFile, input),
+      readFile: (input) => transport.request(WS_METHODS.projectsReadFile, input),
     },
     shell: {
       openInEditor: (cwd, editor) =>
@@ -214,21 +215,6 @@ export function createWsNativeApi(): NativeApi {
       upsertKeybinding: (input) => transport.request(WS_METHODS.serverUpsertKeybinding, input),
       getSettings: () => transport.request(WS_METHODS.serverGetSettings),
       updateSettings: (patch) => transport.request(WS_METHODS.serverUpdateSettings, { patch }),
-    },
-    skills: {
-      list: (input) => transport.request(WS_METHODS.skillsList, input),
-      previewInstall: (input) => transport.request(WS_METHODS.skillsPreviewInstall, input),
-      install: (input) => transport.request(WS_METHODS.skillsInstall, input),
-      remove: (input) => transport.request(WS_METHODS.skillsRemove, input),
-      refresh: (input) => transport.request(WS_METHODS.skillsRefresh, input),
-      checkUpdates: (input) => transport.request(WS_METHODS.skillsCheckUpdates, input),
-      upgrade: (input) => transport.request(WS_METHODS.skillsUpgrade, input),
-      reinstall: (input) => transport.request(WS_METHODS.skillsReinstall, input),
-      previewAdopt: (input) => transport.request(WS_METHODS.skillsPreviewAdopt, input),
-      adopt: (input) => transport.request(WS_METHODS.skillsAdopt, input),
-      setEnabled: (input) => transport.request(WS_METHODS.skillsSetEnabled, input),
-      repairManagedLinks: (input) => transport.request(WS_METHODS.skillsRepairManagedLinks, input),
-      stopManaging: (input) => transport.request(WS_METHODS.skillsStopManaging, input),
     },
     orchestration: {
       getSnapshot: () => transport.request(ORCHESTRATION_WS_METHODS.getSnapshot),

@@ -24,7 +24,8 @@ import * as SqlitePersistence from "./persistence/Layers/Sqlite";
 import { makeServerProviderLayer, makeServerRuntimeServicesLayer } from "./serverLayers";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
 import { ProviderRegistryLive } from "./provider/Layers/ProviderRegistry";
-import { Server } from "./wsServer";
+import { SkillRegistryLive } from "./skills/Services/SkillRegistry";
+import { Server, ServerLive } from "./wsServer";
 import { ServerLoggerLive } from "./serverLogger";
 import { AnalyticsServiceLayerLive } from "./telemetry/Layers/AnalyticsService";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
@@ -312,6 +313,13 @@ export const makeServerLayer = (input: CliInput) =>
     Layer.provideMerge(AnalyticsServiceLayerLive),
     Layer.provideMerge(ServerSettingsLive),
     Layer.provideMerge(makeServerConfigLayer(input)),
+    Layer.provideMerge(
+      SkillRegistryLive.pipe(
+        Layer.provide(AnalyticsServiceLayerLive),
+        Layer.provide(makeServerConfigLayer(input)),
+      ),
+    ),
+    Layer.provideMerge(ServerLive),
   );
 
 const isWildcardHost = (host: string | undefined): boolean =>

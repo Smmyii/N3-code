@@ -19,12 +19,14 @@ export function projectSearchEntriesQueryOptions(input: {
   cwd: string | null;
   query: string;
   enabled?: boolean;
+  allowEmptyQuery?: boolean;
   limit?: number;
   staleTime?: number;
 }) {
   const limit = input.limit ?? DEFAULT_SEARCH_ENTRIES_LIMIT;
+  const query = input.query;
   return queryOptions({
-    queryKey: projectQueryKeys.searchEntries(input.cwd, input.query, limit),
+    queryKey: projectQueryKeys.searchEntries(input.cwd, query, limit),
     queryFn: async () => {
       const api = ensureNativeApi();
       if (!input.cwd) {
@@ -32,11 +34,14 @@ export function projectSearchEntriesQueryOptions(input: {
       }
       return api.projects.searchEntries({
         cwd: input.cwd,
-        query: input.query,
+        query,
         limit,
       });
     },
-    enabled: (input.enabled ?? true) && input.cwd !== null && input.query.length > 0,
+    enabled:
+      (input.enabled ?? true) &&
+      input.cwd !== null &&
+      (input.allowEmptyQuery ? true : query.trim().length > 0),
     staleTime: input.staleTime ?? DEFAULT_SEARCH_ENTRIES_STALE_TIME,
     placeholderData: (previous) => previous ?? EMPTY_SEARCH_ENTRIES_RESULT,
   });
