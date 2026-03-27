@@ -105,6 +105,7 @@ export function SidebarThreadRow(props: {
                   onChange={(event) => props.onRenameChange?.(event.target.value)}
                   onClick={(event) => event.stopPropagation()}
                   onKeyDown={(event) => {
+                    event.stopPropagation();
                     if (event.key === "Enter") {
                       props.onRenameCommit?.();
                     }

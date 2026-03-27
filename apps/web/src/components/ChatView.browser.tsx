@@ -2374,4 +2374,45 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await mounted.cleanup();
     }
   });
+
+  it("keeps thread rename active while typing spaces", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createUnlockedSnapshot({
+        targetMessageId: "msg-user-sidebar-thread-rename-space" as MessageId,
+        targetText: "sidebar thread rename space",
+      }),
+    });
+
+    try {
+      const threadRow = page.getByTestId("sidebar-thread-row-thread-browser-test");
+      await threadRow.click({ button: "right" });
+      await page.getByText("Rename thread").click();
+
+      const renameInput = await waitForElement(
+        () =>
+          document.querySelector(
+            '[data-testid="sidebar-thread-row-thread-browser-test"] input',
+          ) as HTMLInputElement | null,
+        "Unable to find sidebar thread rename input.",
+      );
+
+      renameInput.focus();
+      renameInput.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: " ",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+
+      await waitForLayout();
+
+      expect(document.activeElement).toBe(renameInput);
+      setReactInputValue(renameInput, "Thread rename with spaces");
+      expect(renameInput.value).toBe("Thread rename with spaces");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
 });
