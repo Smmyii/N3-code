@@ -23,17 +23,32 @@ import { Open } from "./open";
 import * as SqlitePersistence from "./persistence/Layers/Sqlite";
 import { makeServerProviderLayer, makeServerRuntimeServicesLayer } from "./serverLayers";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
-import { ProviderHealthLive } from "./provider/Layers/ProviderHealth";
-import { Server, ServerLive } from "./wsServer";
+import { ProviderRegistryLive } from "./provider/Layers/ProviderRegistry";
+import { Server } from "./wsServer";
 import { ServerLoggerLive } from "./serverLogger";
 import { AnalyticsServiceLayerLive } from "./telemetry/Layers/AnalyticsService";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
-import { SkillRegistryLive } from "./skills/Services/SkillRegistry";
+import { readBootstrapEnvelope } from "./bootstrap";
+import { ServerSettingsLive } from "./serverSettings";
 
 export class StartupError extends Data.TaggedError("StartupError")<{
   readonly message: string;
   readonly cause?: unknown;
 }> {}
+
+const PortSchema = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }));
+
+const BootstrapEnvelopeSchema = Schema.Struct({
+  mode: Schema.optional(Schema.String),
+  port: Schema.optional(PortSchema),
+  host: Schema.optional(Schema.String),
+  t3Home: Schema.optional(Schema.String),
+  devUrl: Schema.optional(Schema.URLFromString),
+  noBrowser: Schema.optional(Schema.Boolean),
+  authToken: Schema.optional(Schema.String),
+  autoBootstrapProjectFromCwd: Schema.optional(Schema.Boolean),
+  logWebSocketEvents: Schema.optional(Schema.Boolean),
+});
 
 interface CliInput {
   readonly mode: Option.Option<RuntimeMode>;
@@ -43,6 +58,7 @@ interface CliInput {
   readonly devUrl: Option.Option<URL>;
   readonly noBrowser: Option.Option<boolean>;
   readonly authToken: Option.Option<string>;
+  readonly bootstrapFd: Option.Option<number>;
   readonly autoBootstrapProjectFromCwd: Option.Option<boolean>;
   readonly logWebSocketEvents: Option.Option<boolean>;
   readonly skillsEnabled: Option.Option<boolean>;
@@ -95,12 +111,8 @@ export class CliConfig extends ServiceMap.Service<CliConfig, CliConfigShape>()(
 const CliEnvConfig = Config.all({
   mode: Config.string("T3CODE_MODE").pipe(
     Config.option,
-    Config.map(
-      Option.match<RuntimeMode, string>({
-        onNone: () => "web",
-        onSome: (value) => (value === "desktop" ? "desktop" : "web"),
-      }),
-    ),
+    Config.map(Option.map((value) => (value === "desktop" ? "desktop" : "web"))),
+    Config.map(Option.getOrUndefined),
   ),
   port: Config.port("T3CODE_PORT").pipe(Config.option, Config.map(Option.getOrUndefined)),
   host: Config.string("T3CODE_HOST").pipe(Config.option, Config.map(Option.getOrUndefined)),
@@ -111,6 +123,10 @@ const CliEnvConfig = Config.all({
     Config.map(Option.getOrUndefined),
   ),
   authToken: Config.string("T3CODE_AUTH_TOKEN").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  bootstrapFd: Config.int("T3CODE_BOOTSTRAP_FD").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
@@ -131,6 +147,14 @@ const CliEnvConfig = Config.all({
 const resolveBooleanFlag = (flag: Option.Option<boolean>, envValue: boolean) =>
   Option.getOrElse(Option.filter(flag, Boolean), () => envValue);
 
+const resolveOptionPrecedence = <Value>(
+  ...values: ReadonlyArray<Option.Option<Value>>
+): Option.Option<Value> => Option.firstSomeOf(values);
+
+const isValidPort = (value: number): boolean => value >= 1 && value <= 65_535;
+const isRuntimeMode = (value: string): value is RuntimeMode =>
+  value === "web" || value === "desktop";
+
 export const makeServerConfigLayer = (input: CliInput) =>
   Layer.effect(
     ServerConfig,
@@ -144,43 +168,119 @@ export const makeServerConfigLayer = (input: CliInput) =>
         ),
       );
 
-      const mode = Option.getOrElse(input.mode, () => env.mode);
+      const bootstrapFd = Option.getOrUndefined(input.bootstrapFd) ?? env.bootstrapFd;
+      const bootstrapEnvelope =
+        bootstrapFd !== undefined
+          ? yield* readBootstrapEnvelope(BootstrapEnvelopeSchema, bootstrapFd)
+          : Option.none();
 
-      const port = yield* Option.match(input.port, {
-        onSome: (value) => Effect.succeed(value),
-        onNone: () => {
-          if (env.port) {
-            return Effect.succeed(env.port);
-          }
-          if (mode === "desktop") {
-            return Effect.succeed(DEFAULT_PORT);
-          }
-          return findAvailablePort(DEFAULT_PORT);
+      const mode: RuntimeMode = Option.getOrElse(
+        resolveOptionPrecedence(
+          input.mode,
+          Option.fromUndefinedOr(env.mode),
+          Option.flatMap(bootstrapEnvelope, (bootstrap) =>
+            Option.filter(Option.fromUndefinedOr(bootstrap.mode), isRuntimeMode),
+          ),
+        ),
+        () => "web",
+      );
+      const port = yield* Option.match(
+        resolveOptionPrecedence(
+          input.port,
+          Option.fromUndefinedOr(env.port),
+          Option.flatMap(bootstrapEnvelope, (bootstrap) =>
+            Option.filter(Option.fromUndefinedOr(bootstrap.port), isValidPort),
+          ),
+        ),
+        {
+          onSome: (value) => Effect.succeed(value),
+          onNone: () => {
+            if (mode === "desktop") {
+              return Effect.succeed(DEFAULT_PORT);
+            }
+            return findAvailablePort(DEFAULT_PORT);
+          },
         },
-      });
+      );
 
-      const devUrl = Option.getOrElse(input.devUrl, () => env.devUrl);
-      const baseDir = yield* resolveBaseDir(Option.getOrUndefined(input.t3Home) ?? env.t3Home);
+      const devUrl = Option.getOrElse(
+        resolveOptionPrecedence(
+          input.devUrl,
+          Option.fromUndefinedOr(env.devUrl),
+          Option.flatMap(bootstrapEnvelope, (bootstrap) =>
+            Option.fromUndefinedOr(bootstrap.devUrl),
+          ),
+        ),
+        () => undefined,
+      );
+      const baseDir = yield* resolveBaseDir(
+        Option.getOrUndefined(
+          resolveOptionPrecedence(
+            input.t3Home,
+            Option.fromUndefinedOr(env.t3Home),
+            Option.flatMap(bootstrapEnvelope, (bootstrap) =>
+              Option.fromUndefinedOr(bootstrap.t3Home),
+            ),
+          ),
+        ),
+      );
       const derivedPaths = yield* deriveServerPaths(baseDir, devUrl);
-      const noBrowser = resolveBooleanFlag(input.noBrowser, env.noBrowser ?? mode === "desktop");
-      const authToken = Option.getOrUndefined(input.authToken) ?? env.authToken;
+      const noBrowser = resolveBooleanFlag(
+        input.noBrowser,
+        Option.getOrElse(
+          resolveOptionPrecedence(
+            Option.fromUndefinedOr(env.noBrowser),
+            Option.flatMap(bootstrapEnvelope, (bootstrap) =>
+              Option.fromUndefinedOr(bootstrap.noBrowser),
+            ),
+          ),
+          () => mode === "desktop",
+        ),
+      );
+      const authToken = resolveOptionPrecedence(
+        input.authToken,
+        Option.fromUndefinedOr(env.authToken),
+        Option.flatMap(bootstrapEnvelope, (bootstrap) =>
+          Option.fromUndefinedOr(bootstrap.authToken),
+        ),
+      );
       const autoBootstrapProjectFromCwd = resolveBooleanFlag(
         input.autoBootstrapProjectFromCwd,
-        env.autoBootstrapProjectFromCwd ?? mode === "web",
+        Option.getOrElse(
+          resolveOptionPrecedence(
+            Option.fromUndefinedOr(env.autoBootstrapProjectFromCwd),
+            Option.flatMap(bootstrapEnvelope, (bootstrap) =>
+              Option.fromUndefinedOr(bootstrap.autoBootstrapProjectFromCwd),
+            ),
+          ),
+          () => mode === "web",
+        ),
       );
       const logWebSocketEvents = resolveBooleanFlag(
         input.logWebSocketEvents,
-        env.logWebSocketEvents ?? Boolean(devUrl),
+        Option.getOrElse(
+          resolveOptionPrecedence(
+            Option.fromUndefinedOr(env.logWebSocketEvents),
+            Option.flatMap(bootstrapEnvelope, (bootstrap) =>
+              Option.fromUndefinedOr(bootstrap.logWebSocketEvents),
+            ),
+          ),
+          () => Boolean(devUrl),
+        ),
       );
       const skillsEnabled = Option.match(Option.filter(input.noSkillsEnabled, Boolean), {
         onNone: () => resolveBooleanFlag(input.skillsEnabled, env.skillsEnabled ?? true),
         onSome: () => false,
       });
       const staticDir = devUrl ? undefined : yield* cliConfig.resolveStaticDir;
-      const host =
-        Option.getOrUndefined(input.host) ??
-        env.host ??
-        (mode === "desktop" ? "127.0.0.1" : undefined);
+      const host = Option.getOrElse(
+        resolveOptionPrecedence(
+          input.host,
+          Option.fromUndefinedOr(env.host),
+          Option.flatMap(bootstrapEnvelope, (bootstrap) => Option.fromUndefinedOr(bootstrap.host)),
+        ),
+        () => (mode === "desktop" ? "127.0.0.1" : undefined),
+      );
 
       const config: ServerConfigShape = {
         mode,
@@ -192,7 +292,7 @@ export const makeServerConfigLayer = (input: CliInput) =>
         staticDir,
         devUrl,
         noBrowser,
-        authToken,
+        authToken: Option.getOrUndefined(authToken),
         autoBootstrapProjectFromCwd,
         logWebSocketEvents,
         skillsEnabled,
@@ -202,45 +302,17 @@ export const makeServerConfigLayer = (input: CliInput) =>
     }),
   );
 
-export const makeServerLayer = (input: CliInput) => {
-  const configLayer = makeServerConfigLayer(input);
-  const nodeServicesLayer = NodeServices.layer;
-  const loggerLayer = ServerLoggerLive.pipe(Layer.provideMerge(configLayer));
-  const configAndLoggerLayer = Layer.mergeAll(configLayer, loggerLayer);
-  const foundationLayer = nodeServicesLayer.pipe(Layer.provideMerge(configAndLoggerLayer));
-  const sqliteRuntimeLayer = SqlitePersistence.layerConfig.pipe(
-    Layer.provideMerge(foundationLayer),
+export const makeServerLayer = (input: CliInput) =>
+  Layer.empty.pipe(
+    Layer.provideMerge(makeServerRuntimeServicesLayer()),
+    Layer.provideMerge(makeServerProviderLayer()),
+    Layer.provideMerge(ProviderRegistryLive),
+    Layer.provideMerge(SqlitePersistence.layerConfig),
+    Layer.provideMerge(ServerLoggerLive),
+    Layer.provideMerge(AnalyticsServiceLayerLive),
+    Layer.provideMerge(ServerSettingsLive),
+    Layer.provideMerge(makeServerConfigLayer(input)),
   );
-  const baseLayer = Layer.mergeAll(configAndLoggerLayer, sqliteRuntimeLayer);
-  const telemetryLayer = AnalyticsServiceLayerLive.pipe(Layer.provide(baseLayer));
-  const providerLayer = makeServerProviderLayer().pipe(
-    Layer.provideMerge(nodeServicesLayer),
-    Layer.provideMerge(telemetryLayer),
-    Layer.provideMerge(baseLayer),
-  );
-  const runtimeServicesLayer = makeServerRuntimeServicesLayer().pipe(
-    Layer.provideMerge(nodeServicesLayer),
-    Layer.provideMerge(providerLayer),
-    Layer.provideMerge(baseLayer),
-  );
-  const healthLayer = ProviderHealthLive.pipe(
-    Layer.provideMerge(nodeServicesLayer),
-    Layer.provideMerge(baseLayer),
-  );
-  const skillsLayer = SkillRegistryLive.pipe(
-    Layer.provideMerge(telemetryLayer),
-    Layer.provideMerge(baseLayer),
-  );
-  const baseRuntimeLayer = telemetryLayer.pipe(Layer.provideMerge(baseLayer));
-  const foundationalRuntimeLayer = nodeServicesLayer.pipe(Layer.provideMerge(baseRuntimeLayer));
-  const sharedLayer = providerLayer.pipe(Layer.provideMerge(foundationalRuntimeLayer));
-  const sharedLayerWithHealth = healthLayer.pipe(Layer.provideMerge(sharedLayer));
-  const sharedLayerWithSkills = skillsLayer.pipe(Layer.provideMerge(sharedLayerWithHealth));
-  const appLayer = runtimeServicesLayer.pipe(Layer.provideMerge(sharedLayerWithSkills));
-  const serverLayer = ServerLive.pipe(Layer.provideMerge(appLayer));
-
-  return Layer.mergeAll(appLayer, serverLayer);
-};
 
 const isWildcardHost = (host: string | undefined): boolean =>
   host === "0.0.0.0" || host === "::" || host === "[::]";
@@ -273,12 +345,10 @@ export const recordStartupHeartbeat = Effect.gen(function* () {
   });
 });
 
-export const makeServerProgram = (input: CliInput) =>
+const makeServerRuntimeProgram = (input: CliInput) =>
   Effect.gen(function* () {
-    const cliConfig = yield* CliConfig;
     const { start, stopSignal } = yield* Server;
     const openDeps = yield* Open;
-    yield* cliConfig.fixPath;
 
     const config = yield* ServerConfig;
 
@@ -320,6 +390,13 @@ export const makeServerProgram = (input: CliInput) =>
     return yield* stopSignal;
   }).pipe(Effect.provide(makeServerLayer(input)));
 
+const makeServerProgram = (input: CliInput) =>
+  Effect.gen(function* () {
+    const cliConfig = yield* CliConfig;
+    yield* cliConfig.fixPath;
+    return yield* makeServerRuntimeProgram(input);
+  });
+
 /**
  * These flags mirrors the environment variables and the config shape.
  */
@@ -329,7 +406,7 @@ const modeFlag = Flag.choice("mode", ["web", "desktop"]).pipe(
   Flag.optional,
 );
 const portFlag = Flag.integer("port").pipe(
-  Flag.withSchema(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }))),
+  Flag.withSchema(PortSchema),
   Flag.withDescription("Port for the HTTP/WebSocket server."),
   Flag.optional,
 );
@@ -353,6 +430,11 @@ const noBrowserFlag = Flag.boolean("no-browser").pipe(
 const authTokenFlag = Flag.string("auth-token").pipe(
   Flag.withDescription("Auth token required for WebSocket connections."),
   Flag.withAlias("token"),
+  Flag.optional,
+);
+const bootstrapFdFlag = Flag.integer("bootstrap-fd").pipe(
+  Flag.withSchema(Schema.Int),
+  Flag.withDescription("Read one-time bootstrap secrets from the given file descriptor."),
   Flag.optional,
 );
 const autoBootstrapProjectFromCwdFlag = Flag.boolean("auto-bootstrap-project-from-cwd").pipe(
@@ -392,6 +474,7 @@ export const makeT3Cli = <E, R>(
     devUrl: devUrlFlag,
     noBrowser: noBrowserFlag,
     authToken: authTokenFlag,
+    bootstrapFd: bootstrapFdFlag,
     autoBootstrapProjectFromCwd: autoBootstrapProjectFromCwdFlag,
     logWebSocketEvents: logWebSocketEventsFlag,
     skillsEnabled: skillsEnabledFlag,

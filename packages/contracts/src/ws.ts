@@ -37,22 +37,8 @@ import {
 import { KeybindingRule } from "./keybindings";
 import { ProjectSearchEntriesInput, ProjectWriteFileInput } from "./project";
 import { OpenInEditorInput } from "./editor";
-import { ServerConfigUpdatedPayload } from "./server";
-import {
-  SkillsAdoptInput,
-  SkillsInstallInput,
-  SkillsPreviewInstallInput,
-  SkillsListInput,
-  SkillsRefreshInput,
-  SkillsRemoveInput,
-  SkillsCheckUpdatesInput,
-  SkillsUpgradeInput,
-  SkillsReinstallInput,
-  SkillsPreviewAdoptInput,
-  SkillsSetEnabledInput,
-  SkillsRepairManagedLinksInput,
-  SkillsStopManagingInput,
-} from "./skills";
+import { ServerConfigUpdatedPayload, ServerProviderUpdatedPayload } from "./server";
+import { ServerSettingsPatch } from "./settings";
 
 // ── WebSocket RPC Method Names ───────────────────────────────────────
 
@@ -90,22 +76,10 @@ export const WS_METHODS = {
 
   // Server meta
   serverGetConfig: "server.getConfig",
+  serverRefreshProviders: "server.refreshProviders",
   serverUpsertKeybinding: "server.upsertKeybinding",
-
-  // Skills
-  skillsList: "skills.list",
-  skillsPreviewInstall: "skills.previewInstall",
-  skillsInstall: "skills.install",
-  skillsRemove: "skills.remove",
-  skillsRefresh: "skills.refresh",
-  skillsCheckUpdates: "skills.checkUpdates",
-  skillsUpgrade: "skills.upgrade",
-  skillsReinstall: "skills.reinstall",
-  skillsPreviewAdopt: "skills.previewAdopt",
-  skillsAdopt: "skills.adopt",
-  skillsSetEnabled: "skills.setEnabled",
-  skillsRepairManagedLinks: "skills.repairManagedLinks",
-  skillsStopManaging: "skills.stopManaging",
+  serverGetSettings: "server.getSettings",
+  serverUpdateSettings: "server.updateSettings",
 } as const;
 
 // ── Push Event Channels ──────────────────────────────────────────────
@@ -115,6 +89,7 @@ export const WS_CHANNELS = {
   terminalEvent: "terminal.event",
   serverWelcome: "server.welcome",
   serverConfigUpdated: "server.configUpdated",
+  serverProvidersUpdated: "server.providersUpdated",
 } as const;
 
 // -- Tagged Union of all request body schemas ─────────────────────────
@@ -170,22 +145,10 @@ const WebSocketRequestBody = Schema.Union([
 
   // Server meta
   tagRequestBody(WS_METHODS.serverGetConfig, Schema.Struct({})),
+  tagRequestBody(WS_METHODS.serverRefreshProviders, Schema.Struct({})),
   tagRequestBody(WS_METHODS.serverUpsertKeybinding, KeybindingRule),
-
-  // Skills
-  tagRequestBody(WS_METHODS.skillsList, SkillsListInput),
-  tagRequestBody(WS_METHODS.skillsPreviewInstall, SkillsPreviewInstallInput),
-  tagRequestBody(WS_METHODS.skillsInstall, SkillsInstallInput),
-  tagRequestBody(WS_METHODS.skillsRemove, SkillsRemoveInput),
-  tagRequestBody(WS_METHODS.skillsRefresh, SkillsRefreshInput),
-  tagRequestBody(WS_METHODS.skillsCheckUpdates, SkillsCheckUpdatesInput),
-  tagRequestBody(WS_METHODS.skillsUpgrade, SkillsUpgradeInput),
-  tagRequestBody(WS_METHODS.skillsReinstall, SkillsReinstallInput),
-  tagRequestBody(WS_METHODS.skillsPreviewAdopt, SkillsPreviewAdoptInput),
-  tagRequestBody(WS_METHODS.skillsAdopt, SkillsAdoptInput),
-  tagRequestBody(WS_METHODS.skillsSetEnabled, SkillsSetEnabledInput),
-  tagRequestBody(WS_METHODS.skillsRepairManagedLinks, SkillsRepairManagedLinksInput),
-  tagRequestBody(WS_METHODS.skillsStopManaging, SkillsStopManagingInput),
+  tagRequestBody(WS_METHODS.serverGetSettings, Schema.Struct({})),
+  tagRequestBody(WS_METHODS.serverUpdateSettings, Schema.Struct({ patch: ServerSettingsPatch })),
 ]);
 
 export const WebSocketRequest = Schema.Struct({
@@ -221,6 +184,7 @@ export type WsWelcomePayload = typeof WsWelcomePayload.Type;
 export interface WsPushPayloadByChannel {
   readonly [WS_CHANNELS.serverWelcome]: WsWelcomePayload;
   readonly [WS_CHANNELS.serverConfigUpdated]: typeof ServerConfigUpdatedPayload.Type;
+  readonly [WS_CHANNELS.serverProvidersUpdated]: typeof ServerProviderUpdatedPayload.Type;
   readonly [WS_CHANNELS.gitActionProgress]: typeof GitActionProgressEvent.Type;
   readonly [WS_CHANNELS.terminalEvent]: typeof TerminalEvent.Type;
   readonly [ORCHESTRATION_WS_CHANNELS.domainEvent]: OrchestrationEvent;
@@ -245,6 +209,10 @@ export const WsPushServerConfigUpdated = makeWsPushSchema(
   WS_CHANNELS.serverConfigUpdated,
   ServerConfigUpdatedPayload,
 );
+export const WsPushServerProvidersUpdated = makeWsPushSchema(
+  WS_CHANNELS.serverProvidersUpdated,
+  ServerProviderUpdatedPayload,
+);
 export const WsPushGitActionProgress = makeWsPushSchema(
   WS_CHANNELS.gitActionProgress,
   GitActionProgressEvent,
@@ -259,6 +227,7 @@ export const WsPushChannelSchema = Schema.Literals([
   WS_CHANNELS.gitActionProgress,
   WS_CHANNELS.serverWelcome,
   WS_CHANNELS.serverConfigUpdated,
+  WS_CHANNELS.serverProvidersUpdated,
   WS_CHANNELS.terminalEvent,
   ORCHESTRATION_WS_CHANNELS.domainEvent,
 ]);
@@ -267,6 +236,7 @@ export type WsPushChannelSchema = typeof WsPushChannelSchema.Type;
 export const WsPush = Schema.Union([
   WsPushServerWelcome,
   WsPushServerConfigUpdated,
+  WsPushServerProvidersUpdated,
   WsPushGitActionProgress,
   WsPushTerminalEvent,
   WsPushOrchestrationDomainEvent,
